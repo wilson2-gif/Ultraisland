@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="WindowsDynamicIsland.vcxproj" Id="3be822c3-377d-4194-b272-e07ed96ddc5c" />
+</Solution>

@@ -1,0 +1,32 @@
+# Visual Studio cache & IntelliSense
+.vs/
+*.VC.db
+*.VC.opendb
+*.ipch
+
+# Build outputs
+x64/
+Debug/
+Release/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Compiler intermediates
+*.obj
+*.idb
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.Build.CppClean.log
+
+# VS project user settings (machine-specific)
+*.user
+*.suo
+
+# MSBuild / nmake temporaries
+WindowsD.*/
