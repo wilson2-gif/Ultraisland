@@ -110,6 +110,7 @@ void AmbientWindow::OnTrackChanged(const std::wstring& title,
     m_lastTrackKey = key;
     m_trackMorphTick = GetTickCount();     // déclenche la transition morph (crossfade)
     m_lyrIdxShown = -1; m_lyrScanHint = 0; // repart proprement pour la nouvelle piste
+    m_playBaseTick = 0;                    // resync horloge de lecture au nouveau titre
     unsigned gen = ++m_lyrGen;
     {
         std::lock_guard<std::mutex> lk(m_lyrMtx);
@@ -367,13 +368,30 @@ void AmbientWindow::OnPaint()
                 {lx, ly - 20.f, lxr, ly + 20.f},
                 {0.85f, 0.85f, 0.88f, 0.40f}, DWRITE_TEXT_ALIGNMENT_CENTER);
         } else {
-            // Anticipation 300 ms avant le timestamp de la ligne
+            // ── Horloge de lecture LISSE & MONOTONE ──────────────────────────
+            // On extrapole la position localement (base + temps écoulé) et on ne se
+            // recale sur c.musicCurrentSec QUE si le drift est important (seek/track).
+            // → plus de recul de position sur les petits recalages SMTC.
+            DWORD nowMs = GetTickCount();
+            if (m_playBaseTick == 0) { m_playBaseSec = c.musicCurrentSec; m_playBaseTick = nowMs; }
+            float extrap = c.isMusicPlaying
+                         ? m_playBaseSec + (nowMs - m_playBaseTick) * 0.001f
+                         : m_playBaseSec;
+            if (std::abs(c.musicCurrentSec - extrap) > 1.5f) {   // vrai seek / gros drift
+                m_playBaseSec = c.musicCurrentSec; m_playBaseTick = nowMs; extrap = c.musicCurrentSec;
+            }
+            if (!c.isMusicPlaying) { m_playBaseSec = extrap; m_playBaseTick = nowMs; }  // gèle en pause
+            float playSec = extrap;
+
+            // ── Index MONOTONE : avance d'un cran quand le temps dépasse la ligne
+            // suivante ; ne recule QUE sur un vrai seek arrière. O(1) amorti (plus
+            // de rescan O(n) chaque frame).
             const float ANTICIPATE = 0.30f;
-            float cur = c.musicCurrentSec + ANTICIPATE;
-            int idx = -1;
-            for (int i = 0; i < (int)m_lyrics.size(); ++i)
-                if (m_lyrics[i].t <= cur) idx = i; else break;
-            if (idx != m_lyrIdxShown) { m_lyrIdxShown = idx; m_lyrTick = GetTickCount(); }
+            float cur = playSec + ANTICIPATE;
+            int idx = m_lyrIdxShown;
+            while (idx + 1 < (int)m_lyrics.size() && m_lyrics[idx + 1].t <= cur) ++idx;
+            while (idx >= 0 && m_lyrics[idx].t > cur) --idx;   // seek arrière uniquement
+            if (idx != m_lyrIdxShown) { m_lyrIdxShown = idx; m_lyrTick = nowMs; }
 
             // Ease-Out cubique — durée ADAPTATIVE bornée à l'écart réel vers la
             // ligne suivante : une durée fixe (700 ms) > écart entre 2 lignes

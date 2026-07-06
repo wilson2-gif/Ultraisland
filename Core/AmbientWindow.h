@@ -91,6 +91,12 @@ private:
     DWORD m_closeTick   = 0;
     int   m_lyrIdxShown = -1;     // dernière ligne active (anime le changement)
     DWORD m_lyrTick     = 0;
+    // Horloge de lecture LISSE et MONOTONE : extrapole la progression localement et
+    // ne se recale que sur un vrai seek (drift > 1,5 s). Empêche l'index des lyrics de
+    // reculer quand un event SMTC recale légèrement la position en arrière (glitch
+    // « la ligne rentre en arrière puis repart »).
+    float m_playBaseSec  = 0.f;   // position musicale à m_playBaseTick
+    DWORD m_playBaseTick = 0;     // 0 = non initialisée (resync au prochain frame)
 
     // Zones cliquables (reconstruites au paint)
     // action : 0 préc · 1 play · 2 suiv · 5 slider volume · 9 fermer
