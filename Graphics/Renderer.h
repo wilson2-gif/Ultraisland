@@ -51,6 +51,8 @@ struct WifiNetworkItem {
 struct BtDeviceItem {
     std::wstring name;
     bool         connected   = false;   // « connecté » affiché en dessous
+    bool         paired      = true;    // couplé (section « Appareils couplés ») vs disponible
+    std::wstring id;                     // DeviceInformation.Id (connexion/déconnexion)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +125,7 @@ struct IslandContent {
     // Bluetooth device list (BluetoothList state)
     std::vector<BtDeviceItem> btDevices;
     std::wstring btStatusMsg;               // message d'état (connexion/limite)
+    float        btScrollY = 0.f;           // défilement de la liste BT
 
     std::wstring clockTime, clockDate;
     bool        isHovered = false;

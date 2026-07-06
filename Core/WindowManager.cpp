@@ -1354,15 +1354,20 @@ void WindowManager::OnMouseUp(int x,int y)
             OpenBluetoothList();   // re-query + reste sur le panneau (nouveau statut)
             return;
         }
-        // Clic sur un appareil → connexion in-island best-effort (plus de Réglages)
-        float itemH2=48.f, gap2=5.f, iy2=48.f;
+        // Clic sur un appareil → connexion/déconnexion/couplage in-island.
+        // Miroir EXACT du layout DrawBluetoothList (en-têtes de section + scroll).
+        float itemH2=48.f, gap2=5.f, sepY2=40.f;
+        float yy2=sepY2+8.f - m_content.btScrollY;
+        bool hp=false, ha=false;
         for(int i=0;i<(int)m_btDevices.size();++i){
-            if(y>=(int)iy2&&y<=(int)(iy2+itemH2)){
-                if(!m_btDevices[i].connected)
-                    ConnectBluetoothDevice(m_btDevices[i].name);
+            const auto& d=m_btDevices[i];
+            if(d.paired && !hp){ hp=true; yy2+=22.f; }
+            if(!d.paired && !ha){ ha=true; yy2+=26.f; }
+            if(y>=(int)yy2 && y<=(int)(yy2+itemH2)){
+                ConnectBluetoothDevice(d.name);   // toggle : connecte / déconnecte / couple
                 break;
             }
-            iy2+=itemH2+gap2;
+            yy2+=itemH2+gap2;
         }
         return;
     }
@@ -1465,6 +1470,21 @@ void WindowManager::OnMouseUp(int x,int y)
 // ─────────────────────────────────────────────────────────────────────────────
 void WindowManager::OnMouseWheel(short delta)
 {
+    // Scroll de la liste Bluetooth (couplés + disponibles).
+    if(m_animation->GetDisplayState()==IslandState::BluetoothList){
+        const float ITEM_H=48.f, GAP=5.f;
+        int n=(int)m_btDevices.size();
+        // hauteur contenu ≈ items + en-têtes (22 couplés + 26 dispo si présents)
+        bool anyP=false, anyA=false;
+        for(const auto& d:m_btDevices){ if(d.paired)anyP=true; else anyA=true; }
+        float contentH = n*(ITEM_H+GAP)-GAP + (anyP?22.f:0.f) + (anyA?26.f:0.f);
+        float visibleH = Pill::H_BT - 48.f - 8.f;
+        float maxScroll=(std::max)(0.f, contentH-visibleH);
+        m_content.btScrollY = std::clamp(m_content.btScrollY-(float)delta/120.f*(ITEM_H+GAP),
+                                         0.f, maxScroll);
+        InvalidateRect(m_hwnd,nullptr,FALSE);
+        return;
+    }
     if(m_animation->GetDisplayState()!=IslandState::MusicQueue) return;
     const auto& tracks = m_content.upcomingTracks;   // file Spotify uniquement
     int n=(int)tracks.size(); if(n<=0) return;
@@ -1599,12 +1619,25 @@ void WindowManager::QuerySystemControls()
         if(WlanOpenHandle(2,nullptr,&ver,&hWlan)==ERROR_SUCCESS){
             PWLAN_INTERFACE_INFO_LIST pList=nullptr;
             if(WlanEnumInterfaces(hWlan,nullptr,&pList)==ERROR_SUCCESS&&pList){
-                for(DWORD i=0;i<pList->dwNumberOfItems&&!m_wifiEnabled;++i){
-                    if(pList->InterfaceInfo[i].isState==wlan_interface_state_connected){
-                        m_wifiEnabled=true;
-                        PWLAN_CONNECTION_ATTRIBUTES pAttr=nullptr;
-                        DWORD attrSz=0;
-                        if(WlanQueryInterface(hWlan,&pList->InterfaceInfo[i].InterfaceGuid,
+                for(DWORD i=0;i<pList->dwNumberOfItems;++i){
+                    const auto& intf = pList->InterfaceInfo[i];
+                    // « Activé » = état RADIO logicielle ON (pas l'état de connexion) :
+                    // se déconnecter d'un réseau ne désactive PAS le Wi-Fi.
+                    PWLAN_RADIO_STATE prs=nullptr; DWORD rsz=0;
+                    if(WlanQueryInterface(hWlan,&intf.InterfaceGuid,wlan_intf_opcode_radio_state,
+                                          nullptr,&rsz,(PVOID*)&prs,nullptr)==ERROR_SUCCESS&&prs){
+                        for(DWORD p=0;p<prs->dwNumberOfPhys;++p)
+                            if(prs->PhyRadioState[p].dot11SoftwareRadioState==dot11_radio_state_on &&
+                               prs->PhyRadioState[p].dot11HardwareRadioState==dot11_radio_state_on){
+                                m_wifiEnabled=true; break;
+                            }
+                        WlanFreeMemory(prs);
+                    }
+                    // SSID courant si connecté (pour l'affichage).
+                    if(intf.isState==wlan_interface_state_connected){
+                        m_wifiEnabled=true;   // connecté ⇒ forcément actif
+                        PWLAN_CONNECTION_ATTRIBUTES pAttr=nullptr; DWORD attrSz=0;
+                        if(WlanQueryInterface(hWlan,&intf.InterfaceGuid,
                                               wlan_intf_opcode_current_connection,
                                               nullptr,&attrSz,(PVOID*)&pAttr,nullptr)==ERROR_SUCCESS&&pAttr){
                             auto& ssid=pAttr->wlanAssociationAttributes.dot11Ssid;
@@ -1699,13 +1732,14 @@ void WindowManager::QueryBluetoothDevices()
     try {
         using namespace winrt::Windows::Devices::Enumeration;
         using namespace winrt::Windows::Devices::Bluetooth;
+        // 1) Appareils COUPLÉS (classiques + LE) + statut connecté + id.
         auto sel = BluetoothDevice::GetDeviceSelectorFromPairingState(true);
         auto devs = DeviceInformation::FindAllAsync(sel).get();
         for (auto const& di : devs) {
             if (m_btDevices.size() >= 8) break;
             std::wstring nm(di.Name().c_str());
             if (nm.empty()) continue;
-            BtDeviceItem item; item.name = nm; item.connected = false;
+            BtDeviceItem item; item.name = nm; item.paired = true; item.id = di.Id().c_str();
             try {
                 auto bt = BluetoothDevice::FromIdAsync(di.Id()).get();
                 if (bt) item.connected =
@@ -1721,7 +1755,7 @@ void WindowManager::QueryBluetoothDevices()
             if (nm.empty()) continue;
             bool dup=false; for(auto&e:m_btDevices) if(e.name==nm){dup=true;break;}
             if (dup) continue;
-            BtDeviceItem item; item.name = nm; item.connected = false;
+            BtDeviceItem item; item.name = nm; item.paired = true; item.id = di.Id().c_str();
             try {
                 auto le = BluetoothLEDevice::FromIdAsync(di.Id()).get();
                 if (le) item.connected =
@@ -1729,8 +1763,27 @@ void WindowManager::QueryBluetoothDevices()
             } catch (...) {}
             m_btDevices.push_back(item);
         }
+        // 2) Appareils DISPONIBLES non couplés (snapshot récent, best-effort).
+        try {
+            auto selUnp = BluetoothLEDevice::GetDeviceSelectorFromPairingState(false);
+            auto devsUnp = DeviceInformation::FindAllAsync(selUnp).get();
+            for (auto const& di : devsUnp) {
+                if (m_btDevices.size() >= 18) break;
+                std::wstring nm(di.Name().c_str());
+                if (nm.empty()) continue;
+                bool dup=false; for(auto&e:m_btDevices) if(e.name==nm){dup=true;break;}
+                if (dup) continue;
+                BtDeviceItem item; item.name = nm; item.paired = false;
+                item.connected = false; item.id = di.Id().c_str();
+                m_btDevices.push_back(item);
+            }
+        } catch (...) {}
+        // Tri : connectés d'abord, puis couplés, puis disponibles.
         std::sort(m_btDevices.begin(), m_btDevices.end(),
-                  [](const BtDeviceItem& a, const BtDeviceItem& b){ return a.connected > b.connected; });
+                  [](const BtDeviceItem& a, const BtDeviceItem& b){
+                      if(a.connected!=b.connected) return a.connected>b.connected;
+                      return a.paired>b.paired;
+                  });
     } catch (...) { /* accès BT refusé → liste vide (le panneau invite via le toggle) */ }
 }
 
@@ -1745,6 +1798,7 @@ void WindowManager::OpenBluetoothList()
     m_content.bluetoothEnabled = m_btEnabled;
     m_content.btDevices        = m_btDevices;
     m_content.btStatusMsg.clear();
+    m_content.btScrollY        = 0.f;
     m_animation->StartTransition(IslandState::BluetoothList, 280);
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -1858,19 +1912,30 @@ void WindowManager::ConnectWifi(const std::wstring& ssid, const std::wstring& pa
 // ─────────────────────────────────────────────────────────────────────────────
 void WindowManager::ConnectBluetoothDevice(const std::wstring& name)
 {
-    m_content.btStatusMsg = L"Connexion…";
+    // Retrouve l'état + l'id de l'appareil ciblé.
+    std::wstring id; bool connected=false, paired=true;
+    for (const auto& d : m_btDevices)
+        if (d.name==name) { id=d.id; connected=d.connected; paired=d.paired; break; }
+    if (id.empty()) return;
+
+    m_content.btStatusMsg = connected ? L"Déconnexion…"
+                          : paired    ? L"Connexion…"
+                                      : L"Couplage…";
     InvalidateRect(m_hwnd, nullptr, FALSE);
-    std::thread([name]() {
+    std::thread([id, connected, paired]() {
         try {
             using namespace winrt::Windows::Devices::Enumeration;
             using namespace winrt::Windows::Devices::Bluetooth;
-            auto sel = BluetoothLEDevice::GetDeviceSelectorFromPairingState(true);
-            auto devs = DeviceInformation::FindAllAsync(sel).get();
-            for (auto const& di : devs) {
-                if (std::wstring(di.Name().c_str()) == name) {
-                    auto le = BluetoothLEDevice::FromIdAsync(di.Id()).get();
-                    if (le) { auto r = le.GetGattServicesAsync().get(); (void)r; }  // force connexion
-                    break;
+            if (!paired) {
+                // Coupler (best-effort) — déclenche l'appairage système.
+                auto di = DeviceInformation::CreateFromIdAsync(id).get();
+                if (di && di.Pairing() && di.Pairing().CanPair())
+                    di.Pairing().PairAsync().get();
+            } else {
+                auto le = BluetoothLEDevice::FromIdAsync(id).get();
+                if (le) {
+                    if (connected) le.Close();                       // déconnexion GATT (BLE)
+                    else { auto r = le.GetGattServicesAsync().get(); (void)r; }  // connexion
                 }
             }
         } catch (...) {}
@@ -1882,15 +1947,43 @@ void WindowManager::ConnectBluetoothDevice(const std::wstring& name)
 // ─────────────────────────────────────────────────────────────────────────────
 void WindowManager::ToggleWifi()
 {
-    SHELLEXECUTEINFOW sei={sizeof(sei)};
-    sei.lpVerb=L"runas"; sei.lpFile=L"netsh";
-    sei.lpParameters=m_wifiEnabled
-        ?L"interface set interface \"Wi-Fi\" disable"
-        :L"interface set interface \"Wi-Fi\" enable";
-    sei.nShow=SW_HIDE;
-    if(!ShellExecuteExW(&sei))
-        ShellExecute(nullptr,L"open",L"ms-settings:network-wifi",nullptr,nullptr,SW_SHOWNORMAL);
-    Sleep(600);
+    // SOFT-toggle de la RADIO Wi-Fi (comme le panneau rapide Windows), PAS une
+    // désactivation de la carte réseau (netsh disable). On mise d'abord sur WinRT
+    // Radios (identique au Bluetooth), fallback natif wlanapi radio_state.
+    using namespace winrt::Windows::Devices::Radios;
+    bool toggled=false;
+    try{
+        auto access=Radio::RequestAccessAsync().get();
+        if(access==RadioAccessStatus::Allowed){
+            auto radios=Radio::GetRadiosAsync().get();
+            for(auto const& r:radios){
+                if(r.Kind()==RadioKind::WiFi){
+                    RadioState target=(r.State()==RadioState::On)?RadioState::Off:RadioState::On;
+                    auto st=r.SetStateAsync(target).get();
+                    if(st==RadioAccessStatus::Allowed){ m_wifiEnabled=(target==RadioState::On); toggled=true; }
+                    break;
+                }
+            }
+        }
+    }catch(...){}
+
+    if(!toggled){
+        // Fallback natif privilégié : software radio state (soft block), pas la carte.
+        HANDLE hWlan=nullptr; DWORD ver=0;
+        if(WlanOpenHandle(2,nullptr,&ver,&hWlan)==ERROR_SUCCESS){
+            PWLAN_INTERFACE_INFO_LIST pList=nullptr;
+            if(WlanEnumInterfaces(hWlan,nullptr,&pList)==ERROR_SUCCESS&&pList&&pList->dwNumberOfItems>0){
+                WLAN_PHY_RADIO_STATE rs={};
+                rs.dwPhyIndex=0;
+                rs.dot11SoftwareRadioState = m_wifiEnabled?dot11_radio_state_off:dot11_radio_state_on;
+                WlanSetInterface(hWlan,&pList->InterfaceInfo[0].InterfaceGuid,
+                                 wlan_intf_opcode_radio_state,sizeof(rs),&rs,nullptr);
+            }
+            if(pList) WlanFreeMemory(pList);
+            WlanCloseHandle(hWlan,nullptr);
+        }
+    }
+    Sleep(300);
     QuerySystemControls();
 }
 

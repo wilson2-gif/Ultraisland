@@ -420,15 +420,11 @@ void Renderer::DrawLiquidPill(float px, float pw, float ph, const IslandContent&
                                                   (phD - as.height*scale)*.5f));
                 dc->DrawImage(m_fxBlur);
                 dc->SetTransform(D2D1::Matrix3x2F::Identity());
-                // Voile sombre pour la lisibilité du texte (suit l'opacité réglée).
-                // TEINTÉ par l'accent de la pochette (au lieu de noir neutre) : à
-                // haute opacité le voile neutre écrasait quasi toute la couleur de
-                // l'album (76-85 % de noir pur) → l'encoche paraissait toujours
-                // grise/noire quelle que soit la musique. Un voile sombre mais
-                // COLORÉ (accent × 0.40) laisse l'encoche « prendre » la couleur
-                // dominante du morceau en cours tout en gardant le texte lisible.
-                SetB0({m_accent.r*0.40f, m_accent.g*0.40f, m_accent.b*0.40f,
-                       0.10f + 0.75f * PillRT::BASE_ALPHA});
+                // Voile sombre NEUTRE (noir) pour la lisibilité du texte : c'est la
+                // POCHETTE FLOUTÉE en dessous qui donne sa couleur à l'encoche, PAS un
+                // voile teinté (un voile coloré masquait la pochette). Opacité réduite
+                // (0.08 + 0.55*BASE_ALPHA) pour laisser la pochette bien transparaître.
+                SetB0({0.f, 0.f, 0.f, 0.08f + 0.55f * PillRT::BASE_ALPHA});
                 m_rt->FillGeometry(m_pillGeometry, m_b0);
                 dc->PopLayer();
                 artBg = true;
@@ -1173,9 +1169,20 @@ void Renderer::DrawBluetoothList(float px, float pw, float ph, const IslandConte
         Txt(L"Aucun appareil appairé", m_fS,
             {px+pad,iy+8,px+pw-pad,iy+26}, K::GR, fade*.55f, DWRITE_TEXT_ALIGNMENT_CENTER);
     } else {
-        for(int i=0; i<(int)c.btDevices.size() && iy+itemH<ph-8; ++i){
+        // Sections « Appareils couplés » / « Disponibles » + défilement (clip).
+        m_rt->PushAxisAlignedClip({px+pad, sepY+3, px+pw-pad, ph-6}, D2D1_ANTIALIAS_MODE_ALIASED);
+        float yy = sepY+8.f - c.btScrollY;
+        bool hdrPaired=false, hdrAvail=false;
+        for(int i=0; i<(int)c.btDevices.size(); ++i){
             const auto& d = c.btDevices[i];
+            if(d.paired && !hdrPaired){ hdrPaired=true;
+                Txt(L"APPAREILS COUPLÉS", m_fX, {px+pad+4,yy,px+pw-pad,yy+14}, K::GR, fade*.55f); yy+=22.f; }
+            if(!d.paired && !hdrAvail){ hdrAvail=true;
+                Txt(L"DISPONIBLES", m_fX, {px+pad+4,yy+4,px+pw-pad,yy+18}, K::GR, fade*.55f); yy+=26.f; }
             bool isCon = d.connected;
+            bool vis = (yy+itemH > sepY && yy < ph);
+            iy = yy;
+            if(vis){
             D2D1_COLOR_F bg = isCon
                 ? D2D1::ColorF(0.f,0.30f,0.65f,0.22f*fade)
                 : D2D1::ColorF(1.f,1.f,1.f,0.055f*fade);
@@ -1200,8 +1207,10 @@ void Renderer::DrawBluetoothList(float px, float pw, float ph, const IslandConte
             } else {
                 Txt(d.name, m_fT, {tx2,iy+16,px+pw-pad-16,iy+34}, K::WHITE, fade*.88f);
             }
-            iy += itemH+gap;
+            }  // fin if(vis)
+            yy += itemH+gap;
         }
+        m_rt->PopAxisAlignedClip();
     }
 }
 
