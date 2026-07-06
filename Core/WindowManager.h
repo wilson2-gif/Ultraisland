@@ -26,6 +26,7 @@ static constexpr UINT WM_ISLAND_SPOTIFY   = WM_USER + 102;  // Connexion Spotify
 static constexpr UINT WM_ISLAND_SPOTIFY_LOGOUT = WM_USER + 103;  // Déconnexion Spotify
 static constexpr UINT WM_ISLAND_AMBIENT        = WM_USER + 104;  // ouvre le mode ambiant
                                                                  // (wParam=1 : auto/unlock)
+static constexpr UINT WM_ISLAND_BT_RESULT      = WM_USER + 105;  // résultat scan Bluetooth (async)
 
 struct AppConfig;
 
@@ -183,6 +184,12 @@ private:
 
     std::vector<WifiNetworkItem> m_wifiNetworks;
     std::vector<BtDeviceItem>    m_btDevices;
+    // Scan Bluetooth ASYNCHRONE (les appels WinRT .get() bloquants gèleraient le
+    // thread UI). Un thread de fond remplit m_btPending sous mutex puis poste
+    // WM_ISLAND_BT_RESULT ; le thread UI recopie vers m_btDevices/m_content.
+    std::mutex                   m_btMutex;
+    std::vector<BtDeviceItem>    m_btPending;
+    bool                         m_btScanning = false;   // (thread UI uniquement)
 
     // ── Saisie mot de passe Wi-Fi in-island ──────────────────────────────
     bool         m_wifiPassMode = false;   // panneau de saisie affiché
@@ -223,8 +230,9 @@ private:
     void OpenWifiList();            // query + transition vers l'état WifiList (clic Wi-Fi)
     void ConnectWifi(const std::wstring& ssid, const std::wstring& password); // WlanConnect natif
     void SetWifiPassMode(bool on, const std::wstring& ssid = L"");  // saisie mot de passe + focus
-    void QueryBluetoothDevices();   // énumère les appareils BT appairés + statut connecté
-    void OpenBluetoothList();       // query + transition vers l'état BluetoothList
+    void QueryBluetoothDevices(std::vector<BtDeviceItem>& out);  // énumération PURE (thread de fond)
+    void ScanBluetoothAsync();      // lance le scan BT sur un thread + poste le résultat
+    void OpenBluetoothList();       // transition vers l'état BluetoothList + scan async
     void ConnectBluetoothDevice(const std::wstring& name);  // connexion in-island best-effort
     void CheckDismiss();
     void OnAnimTick();

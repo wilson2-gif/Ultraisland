@@ -126,6 +126,7 @@ struct IslandContent {
     std::vector<BtDeviceItem> btDevices;
     std::wstring btStatusMsg;               // message d'état (connexion/limite)
     float        btScrollY = 0.f;           // défilement de la liste BT
+    bool         btScanning = false;        // scan async en cours → « Recherche… »
 
     std::wstring clockTime, clockDate;
     bool        isHovered = false;

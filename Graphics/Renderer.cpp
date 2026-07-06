@@ -1166,7 +1166,7 @@ void Renderer::DrawBluetoothList(float px, float pw, float ph, const IslandConte
         Txt(L"Bluetooth désactivé", m_fS,
             {px+pad,iy+8,px+pw-pad,iy+26}, K::GR, fade*.55f, DWRITE_TEXT_ALIGNMENT_CENTER);
     } else if(c.btDevices.empty()){
-        Txt(L"Aucun appareil appairé", m_fS,
+        Txt(c.btScanning ? L"Recherche des appareils…" : L"Aucun appareil trouvé", m_fS,
             {px+pad,iy+8,px+pw-pad,iy+26}, K::GR, fade*.55f, DWRITE_TEXT_ALIGNMENT_CENTER);
     } else {
         // Sections « Appareils couplés » / « Disponibles » + défilement (clip).

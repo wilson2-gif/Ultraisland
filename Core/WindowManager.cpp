@@ -690,9 +690,7 @@ void WindowManager::CheckDismiss()
                 for(const auto& n:m_wifiNetworks) if(n.connected){ m_content.wifiConnectingIdx=-1; break; }
             InvalidateRect(m_hwnd,nullptr,FALSE);
         } else if(ls==IslandState::BluetoothList && m_btEnabled){
-            QueryBluetoothDevices();
-            m_content.btDevices = m_btDevices;
-            InvalidateRect(m_hwnd,nullptr,FALSE);
+            ScanBluetoothAsync();   // NON bloquant (thread + WM_ISLAND_BT_RESULT)
         }
     }
 
@@ -1726,17 +1724,19 @@ void WindowManager::QueryWifiNetworks()
 //  Classiques (BluetoothDevice) + BLE (BluetoothLEDevice), dédupliqués, connectés
 //  en tête. WinRT bloquant (.get()) — appelé ponctuellement à l'ouverture du panneau.
 // ─────────────────────────────────────────────────────────────────────────────
-void WindowManager::QueryBluetoothDevices()
+// Énumération PURE (aucun accès aux membres m_* sauf l'out-param) — appelée
+// depuis un THREAD DE FOND pour ne pas geler l'UI avec les .get() WinRT bloquants.
+void WindowManager::QueryBluetoothDevices(std::vector<BtDeviceItem>& out)
 {
-    m_btDevices.clear();
+    out.clear();
     try {
         using namespace winrt::Windows::Devices::Enumeration;
         using namespace winrt::Windows::Devices::Bluetooth;
-        // 1) Appareils COUPLÉS (classiques + LE) + statut connecté + id.
+        // 1) Appareils COUPLES (classiques + LE) + statut connecte + id.
         auto sel = BluetoothDevice::GetDeviceSelectorFromPairingState(true);
         auto devs = DeviceInformation::FindAllAsync(sel).get();
         for (auto const& di : devs) {
-            if (m_btDevices.size() >= 8) break;
+            if (out.size() >= 8) break;
             std::wstring nm(di.Name().c_str());
             if (nm.empty()) continue;
             BtDeviceItem item; item.name = nm; item.paired = true; item.id = di.Id().c_str();
@@ -1745,15 +1745,15 @@ void WindowManager::QueryBluetoothDevices()
                 if (bt) item.connected =
                     (bt.ConnectionStatus() == BluetoothConnectionStatus::Connected);
             } catch (...) {}
-            m_btDevices.push_back(item);
+            out.push_back(item);
         }
         auto selLe = BluetoothLEDevice::GetDeviceSelectorFromPairingState(true);
         auto devsLe = DeviceInformation::FindAllAsync(selLe).get();
         for (auto const& di : devsLe) {
-            if (m_btDevices.size() >= 12) break;
+            if (out.size() >= 12) break;
             std::wstring nm(di.Name().c_str());
             if (nm.empty()) continue;
-            bool dup=false; for(auto&e:m_btDevices) if(e.name==nm){dup=true;break;}
+            bool dup=false; for(auto&e:out) if(e.name==nm){dup=true;break;}
             if (dup) continue;
             BtDeviceItem item; item.name = nm; item.paired = true; item.id = di.Id().c_str();
             try {
@@ -1761,30 +1761,47 @@ void WindowManager::QueryBluetoothDevices()
                 if (le) item.connected =
                     (le.ConnectionStatus() == BluetoothConnectionStatus::Connected);
             } catch (...) {}
-            m_btDevices.push_back(item);
+            out.push_back(item);
         }
-        // 2) Appareils DISPONIBLES non couplés (snapshot récent, best-effort).
+        // 2) Appareils DISPONIBLES non couples (snapshot recent, best-effort).
         try {
             auto selUnp = BluetoothLEDevice::GetDeviceSelectorFromPairingState(false);
             auto devsUnp = DeviceInformation::FindAllAsync(selUnp).get();
             for (auto const& di : devsUnp) {
-                if (m_btDevices.size() >= 18) break;
+                if (out.size() >= 18) break;
                 std::wstring nm(di.Name().c_str());
                 if (nm.empty()) continue;
-                bool dup=false; for(auto&e:m_btDevices) if(e.name==nm){dup=true;break;}
+                bool dup=false; for(auto&e:out) if(e.name==nm){dup=true;break;}
                 if (dup) continue;
                 BtDeviceItem item; item.name = nm; item.paired = false;
                 item.connected = false; item.id = di.Id().c_str();
-                m_btDevices.push_back(item);
+                out.push_back(item);
             }
         } catch (...) {}
-        // Tri : connectés d'abord, puis couplés, puis disponibles.
-        std::sort(m_btDevices.begin(), m_btDevices.end(),
+        std::sort(out.begin(), out.end(),
                   [](const BtDeviceItem& a, const BtDeviceItem& b){
                       if(a.connected!=b.connected) return a.connected>b.connected;
                       return a.paired>b.paired;
                   });
-    } catch (...) { /* accès BT refusé → liste vide (le panneau invite via le toggle) */ }
+    } catch (...) { /* acces BT refuse -> liste vide */ }
+}
+
+// Lance le scan BT sur un thread de fond puis poste WM_ISLAND_BT_RESULT (thread UI
+// recopie m_btPending -> m_btDevices/m_content). Évite le gel de l'interface.
+void WindowManager::ScanBluetoothAsync()
+{
+    if (m_btScanning) return;      // un scan est déjà en cours
+    m_btScanning = true;
+    HWND hwnd = m_hwnd;
+    std::thread([this, hwnd]() {
+        // WinRT exige un apartment sur CE thread pour les .get() (sinon échec/hang).
+        try { winrt::init_apartment(winrt::apartment_type::multi_threaded); } catch (...) {}
+        std::vector<BtDeviceItem> tmp;
+        try { QueryBluetoothDevices(tmp); } catch (...) {}
+        { std::lock_guard<std::mutex> lk(m_btMutex); m_btPending = std::move(tmp); }
+        if (hwnd) PostMessage(hwnd, WM_ISLAND_BT_RESULT, 0, 0);  // toujours posté
+        try { winrt::uninit_apartment(); } catch (...) {}
+    }).detach();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1792,14 +1809,15 @@ void WindowManager::QueryBluetoothDevices()
 // ─────────────────────────────────────────────────────────────────────────────
 void WindowManager::OpenBluetoothList()
 {
-    QuerySystemControls();                       // rafraîchit m_btEnabled (radio)
-    if (m_btEnabled) QueryBluetoothDevices();    // inutile de scanner si BT off
-    else             m_btDevices.clear();
+    QuerySystemControls();                       // rafraîchit m_btEnabled (radio) — rapide
+    m_btDevices.clear();
     m_content.bluetoothEnabled = m_btEnabled;
-    m_content.btDevices        = m_btDevices;
+    m_content.btDevices.clear();
     m_content.btStatusMsg.clear();
     m_content.btScrollY        = 0.f;
+    m_content.btScanning       = m_btEnabled;      // « Recherche… » pendant le scan
     m_animation->StartTransition(IslandState::BluetoothList, 280);
+    if (m_btEnabled) ScanBluetoothAsync();        // énumération NON bloquante (thread)
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -1923,6 +1941,7 @@ void WindowManager::ConnectBluetoothDevice(const std::wstring& name)
                                       : L"Couplage…";
     InvalidateRect(m_hwnd, nullptr, FALSE);
     std::thread([id, connected, paired]() {
+        try { winrt::init_apartment(winrt::apartment_type::multi_threaded); } catch (...) {}
         try {
             using namespace winrt::Windows::Devices::Enumeration;
             using namespace winrt::Windows::Devices::Bluetooth;
@@ -2320,6 +2339,19 @@ LRESULT CALLBACK WindowManager::WindowProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM l
     // ── P0-FIX : traitement des mises à jour thread-safe ──────────────────
     case WM_ISLAND_UPDATE:
         self->DrainUpdateQueue();
+        return 0;
+
+    case WM_ISLAND_BT_RESULT:     // résultat du scan Bluetooth async (thread de fond)
+        {
+            std::lock_guard<std::mutex> lk(self->m_btMutex);
+            self->m_btDevices = self->m_btPending;
+        }
+        self->m_btScanning = false;
+        self->m_content.btScanning = false;
+        self->m_content.btDevices = self->m_btDevices;
+        // borne le scroll si la liste a rétréci
+        if(self->m_content.btScrollY < 0.f) self->m_content.btScrollY = 0.f;
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_ISLAND_RELOADCFG:      // « Appliquer » du Cockpit
