@@ -70,7 +70,8 @@ void AmbientWindow::Open(HINSTANCE hi)
         s_reg = true;
     }
     int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
-    m_hwnd = CreateWindowEx(WS_EX_TOPMOST, L"UltraAmbient", L"Mode ambiant",
+    // WS_EX_TOOLWINDOW : pas de bouton dans la barre des tâches (fenêtre utilitaire).
+    m_hwnd = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"UltraAmbient", L"Mode ambiant",
         WS_POPUP | WS_VISIBLE, 0, 0, w, h, nullptr, nullptr, hi, this);
     if (!m_hwnd) return;
     m_openTick = GetTickCount();
@@ -259,12 +260,34 @@ void AmbientWindow::Txt(const std::wstring& t, IDWriteTextFormat* f,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  PlaybackSec — horloge de lecture LISSE (suivi doux façon PLL). Avance avec le
+//  TEMPS RÉEL quand ça joue, et corrige EN DOUCEUR vers la position rapportée
+//  (12 %/frame) : pas de saut ni de va-et-vient sur les petits recalages SMTC, et
+//  pas de retard car elle converge en ~0,4 s. Snap seulement sur un vrai seek
+//  (>1,5 s). À appeler UNE SEULE FOIS par frame (elle fait avancer l'horloge).
+// ─────────────────────────────────────────────────────────────────────────────
+float AmbientWindow::PlaybackSec(const IslandContent& c)
+{
+    DWORD now = GetTickCount();
+    if (m_playBaseTick == 0) { m_playBaseSec = c.musicCurrentSec; m_playBaseTick = now; return m_playBaseSec; }
+    float dt = (now - m_playBaseTick) * 0.001f;
+    m_playBaseTick = now;
+    if (c.isMusicPlaying) m_playBaseSec += dt;              // avance temps réel
+    float err = c.musicCurrentSec - m_playBaseSec;
+    if (std::abs(err) > 1.5f) m_playBaseSec = c.musicCurrentSec;   // seek → snap
+    else                      m_playBaseSec += err * 0.12f;        // correction douce (PLL)
+    if (m_playBaseSec < 0.f) m_playBaseSec = 0.f;
+    return m_playBaseSec;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 void AmbientWindow::OnPaint()
 {
     if (!EnsureDevRes() || !m_content) return;
     DecodeArt();   // rafraîchit si la pochette a changé
     m_zones.clear();
     const IslandContent& c = *m_content;
+    float playSec = PlaybackSec(c);   // horloge lisse (lyrics + barre de progression)
 
     m_rt->BeginDraw();
     D2D1_SIZE_F sz = m_rt->GetSize();
@@ -308,20 +331,24 @@ void AmbientWindow::OnPaint()
     // Y a-t-il des lyrics ? (verrou bref) — SANS lyrics : pochette + carte CENTRÉES.
     bool hasLyrics; { std::lock_guard<std::mutex> lk(m_lyrMtx); hasLyrics = !m_lyrics.empty(); }
     float MX = sz.width * 0.04f, MY = sz.height * 0.035f;   // marges reduites
-    const float CARD_H = 148.f, BOT_M = 22.f, COL_GAP = 44.f, V_GAP = 14.f;
+    const float CARD_H = 118.f, BOT_M = 22.f, COL_GAP = 44.f, V_GAP = 14.f;  // carte -20%
     float artSide = std::min(sz.width * 0.46f,
                              sz.height - MY - V_GAP - CARD_H - BOT_M);
-    // Sans lyrics : pochette CENTREE horizontalement (pas de colonne droite).
-    float artL = hasLyrics ? MX : (sz.width - artSide) * 0.5f;
+    // Décalage ANIMÉ (doux) entre pochette centrée (sans lyrics) et à gauche (avec) :
+    // m_layoutT ease vers la cible → glissement fluide au lieu d'un saut.
+    float targetT = hasLyrics ? 1.f : 0.f;
+    m_layoutT += (targetT - m_layoutT) * 0.12f;
+    if (std::abs(targetT - m_layoutT) < 0.002f) m_layoutT = targetT;
+    float artLc = (sz.width - artSide) * 0.5f;          // centré
+    float artL  = artLc + (MX - artLc) * m_layoutT;     // interpolé vers la gauche
     float artT = MY, artR = artL + artSide, artB = artT + artSide;
     float cardL = artL, cardR = artR, cardT = artB + V_GAP, cardB = cardT + CARD_H;
     float lyrL = artR + COL_GAP, lyrR = sz.width - MX, lyrT = artT, lyrB = artB;
     if (m_art) {
         // Zone verticale disponible au-dessus de la carte contrôle (CH=200, marge 80).
         // (geometrie pochette calculee au niveau de OnPaint ci-dessus)
-        // Ombre douce sous la pochette
-        m_b->SetColor({0.f, 0.f, 0.f, 0.45f});
-        m_rt->FillRoundedRectangle({{artL-4, artT-2, artR+4, artB+10}, 28.f, 28.f}, m_b);
+        // (Ombre portée retirée : le rect noir 0.45 débordant de 10 px SOUS la pochette
+        //  créait un halo sombre asymétrique en bas. Le fond flouté suffit.)
 
         // Pochette NETTE en coin arrondi via bitmap-brush (cover-fill centré)
         D2D1_SIZE_F as2 = m_art->GetSize();
@@ -368,30 +395,16 @@ void AmbientWindow::OnPaint()
                 {lx, ly - 20.f, lxr, ly + 20.f},
                 {0.85f, 0.85f, 0.88f, 0.40f}, DWRITE_TEXT_ALIGNMENT_CENTER);
         } else {
-            // ── Horloge de lecture LISSE & MONOTONE ──────────────────────────
-            // On extrapole la position localement (base + temps écoulé) et on ne se
-            // recale sur c.musicCurrentSec QUE si le drift est important (seek/track).
-            // → plus de recul de position sur les petits recalages SMTC.
-            DWORD nowMs = GetTickCount();
-            if (m_playBaseTick == 0) { m_playBaseSec = c.musicCurrentSec; m_playBaseTick = nowMs; }
-            float extrap = c.isMusicPlaying
-                         ? m_playBaseSec + (nowMs - m_playBaseTick) * 0.001f
-                         : m_playBaseSec;
-            if (std::abs(c.musicCurrentSec - extrap) > 1.5f) {   // vrai seek / gros drift
-                m_playBaseSec = c.musicCurrentSec; m_playBaseTick = nowMs; extrap = c.musicCurrentSec;
-            }
-            if (!c.isMusicPlaying) { m_playBaseSec = extrap; m_playBaseTick = nowMs; }  // gèle en pause
-            float playSec = extrap;
-
-            // ── Index MONOTONE : avance d'un cran quand le temps dépasse la ligne
-            // suivante ; ne recule QUE sur un vrai seek arrière. O(1) amorti (plus
-            // de rescan O(n) chaque frame).
-            const float ANTICIPATE = 0.30f;
+            // Index MONOTONE depuis l'horloge lisse `playSec` (calculée 1×/frame) :
+            // avance d'un cran quand le temps dépasse la ligne suivante ; ne recule
+            // QUE sur un vrai seek arrière. Anticipation pour compenser la latence
+            // SMTC (les paroles étaient « en retard »).
+            const float ANTICIPATE = 0.45f;
             float cur = playSec + ANTICIPATE;
             int idx = m_lyrIdxShown;
             while (idx + 1 < (int)m_lyrics.size() && m_lyrics[idx + 1].t <= cur) ++idx;
             while (idx >= 0 && m_lyrics[idx].t > cur) --idx;   // seek arrière uniquement
-            if (idx != m_lyrIdxShown) { m_lyrIdxShown = idx; m_lyrTick = nowMs; }
+            if (idx != m_lyrIdxShown) { m_lyrIdxShown = idx; m_lyrTick = GetTickCount(); }
 
             // Ease-Out cubique — durée ADAPTATIVE bornée à l'écart réel vers la
             // ligne suivante : une durée fixe (700 ms) > écart entre 2 lignes
@@ -474,18 +487,18 @@ void AmbientWindow::OnPaint()
 
         // Titre + artiste CENTRÉS
         float pad = 24.f;
-        Txt(c.musicTitle,  m_fTitle, {card.left+pad, cy0+12, card.right-pad, cy0+38},
+        Txt(c.musicTitle,  m_fTitle, {card.left+pad, cy0+10, card.right-pad, cy0+34},
             AK::WHITE, DWRITE_TEXT_ALIGNMENT_LEADING);
-        Txt(c.musicArtist, m_fSub,   {card.left+pad, cy0+38, card.right-pad, cy0+58},
+        Txt(c.musicArtist, m_fSub,   {card.left+pad, cy0+32, card.right-pad, cy0+50},
             AK::DIM, DWRITE_TEXT_ALIGNMENT_LEADING);
 
         // Barre progression + temps
-        float bx = card.left + pad, bw = CW - pad*2.f, by = cy0 + 72.f;
+        float bx = card.left + pad, bw = CW - pad*2.f, by = cy0 + 56.f;
         m_progressBarRect = {bx, by - 10.f, bx + bw, by + 10.f};
         m_b->SetColor({1,1,1,0.18f});
         m_rt->FillRoundedRectangle({{bx, by, bx+bw, by+3.5f}, 1.75f, 1.75f}, m_b);
         float prog = std::clamp(m_isDraggingProgress ? m_dragProgress
-                                                    : c.musicProgress, 0.f, 1.f);
+                     : (c.musicTotalSec > 0.f ? playSec / c.musicTotalSec : 0.f), 0.f, 1.f);
         m_b->SetColor(AK::WHITE);
         m_rt->FillRoundedRectangle({{bx, by, bx+bw*prog, by+3.5f}, 1.75f, 1.75f}, m_b);
         m_rt->FillEllipse({{bx+bw*prog, by+1.75f}, 6.f, 6.f}, m_b);
@@ -494,7 +507,7 @@ void AmbientWindow::OnPaint()
                                                      (int)(s/60), (int)s%60); };
         wchar_t l[8], r[8];
         FT(m_isDraggingProgress ? m_dragProgress * c.musicTotalSec
-                                : c.musicCurrentSec, l);
+                                : playSec, l);
         FT(c.musicTotalSec, r);
         Txt(l, m_fSmall, {bx, by+10, bx+60, by+26}, AK::MUTED,
             DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -502,7 +515,7 @@ void AmbientWindow::OnPaint()
             DWRITE_TEXT_ALIGNMENT_TRAILING);
 
         // Contrôles centrés
-        float ctrlY = cy0 + 106.f;
+        float ctrlY = cy0 + 82.f;
         const wchar_t* gl[3] = {L"",
                                 c.isMusicPlaying ? L"" : L"",
                                 L""};
@@ -513,7 +526,7 @@ void AmbientWindow::OnPaint()
         }
 
         // Slider VOLUME
-        float vy    = cy0 + 132.f;
+        float vy    = cy0 + 104.f;
         float vpad  = 46.f;
         float vx1   = card.left + vpad + 22.f;
         float vx2   = card.right - vpad;

@@ -13,7 +13,7 @@
 
   <Identity Name="Ultraisland.App"
             Publisher="CN=Ultraisland Dev"
-            Version="2.9.9.0"
+            Version="3.0.0.0"
             ProcessorArchitecture="x64" />
 
   <Properties>

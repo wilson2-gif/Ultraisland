@@ -95,8 +95,10 @@ private:
     // ne se recale que sur un vrai seek (drift > 1,5 s). Empêche l'index des lyrics de
     // reculer quand un event SMTC recale légèrement la position en arrière (glitch
     // « la ligne rentre en arrière puis repart »).
-    float m_playBaseSec  = 0.f;   // position musicale à m_playBaseTick
+    float m_playBaseSec  = 0.f;   // horloge de lecture LISSE (position courante)
     DWORD m_playBaseTick = 0;     // 0 = non initialisée (resync au prochain frame)
+    float m_layoutT      = 0.f;   // 0=pochette centrée … 1=split (anim douce du décalage)
+    float PlaybackSec(const IslandContent& c);   // horloge PLL : lisse + monotone (1×/frame)
 
     // Zones cliquables (reconstruites au paint)
     // action : 0 préc · 1 play · 2 suiv · 5 slider volume · 9 fermer
