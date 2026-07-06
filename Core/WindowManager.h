@@ -190,6 +190,7 @@ private:
     std::mutex                   m_btMutex;
     std::vector<BtDeviceItem>    m_btPending;
     bool                         m_btScanning = false;   // (thread UI uniquement)
+    std::wstring                 m_musicSourceAumid;     // AUMID brut de l'app musicale (clic titre)
 
     // ── Saisie mot de passe Wi-Fi in-island ──────────────────────────────
     bool         m_wifiPassMode = false;   // panneau de saisie affiché
@@ -232,6 +233,7 @@ private:
     void SetWifiPassMode(bool on, const std::wstring& ssid = L"");  // saisie mot de passe + focus
     void QueryBluetoothDevices(std::vector<BtDeviceItem>& out);  // énumération PURE (thread de fond)
     void ScanBluetoothAsync();      // lance le scan BT sur un thread + poste le résultat
+    void ActivateMusicApp();        // amène l'app musicale au premier plan (clic sur le titre)
     void OpenBluetoothList();       // transition vers l'état BluetoothList + scan async
     void ConnectBluetoothDevice(const std::wstring& name);  // connexion in-island best-effort
     void CheckDismiss();

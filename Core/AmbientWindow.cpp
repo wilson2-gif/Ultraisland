@@ -304,16 +304,16 @@ void AmbientWindow::OnPaint()
     // ── GRANDE POCHETTE LATÉRALE (gauche) — réintroduite à la demande ─────────
     //   Layout split : pochette nette à GAUCHE (grande), lyrics à DROITE, carte
     //   contrôle centrée en bas. La pochette est dessinée par-DESSUS le fond flouté.
-float MX = sz.width * 0.04f, MY = sz.height * 0.035f;   // marges reduites
+    // Y a-t-il des lyrics ? (verrou bref) — SANS lyrics : pochette + carte CENTRÉES.
+    bool hasLyrics; { std::lock_guard<std::mutex> lk(m_lyrMtx); hasLyrics = !m_lyrics.empty(); }
+    float MX = sz.width * 0.04f, MY = sz.height * 0.035f;   // marges reduites
     const float CARD_H = 148.f, BOT_M = 22.f, COL_GAP = 44.f, V_GAP = 14.f;
-    // Pochette AGRANDIE (~+30%) : marges + carte controle comprimees pour lui
-    // donner plus de place verticale (elle est limitee par la hauteur, pas la largeur).
     float artSide = std::min(sz.width * 0.46f,
                              sz.height - MY - V_GAP - CARD_H - BOT_M);
-    float artL = MX, artT = MY, artR = artL + artSide, artB = artT + artSide;
-    // Carte controle : sous la pochette, meme largeur (colonne gauche).
+    // Sans lyrics : pochette CENTREE horizontalement (pas de colonne droite).
+    float artL = hasLyrics ? MX : (sz.width - artSide) * 0.5f;
+    float artT = MY, artR = artL + artSide, artB = artT + artSide;
     float cardL = artL, cardR = artR, cardT = artB + V_GAP, cardB = cardT + CARD_H;
-    // Panneau lyrics : colonne droite, meme hauteur que la pochette.
     float lyrL = artR + COL_GAP, lyrR = sz.width - MX, lyrT = artT, lyrB = artB;
     if (m_art) {
         // Zone verticale disponible au-dessus de la carte contrôle (CH=200, marge 80).
@@ -355,7 +355,7 @@ float MX = sz.width * 0.04f, MY = sz.height * 0.035f;   // marges reduites
     //   4) Ease-Out cubique déjà via Ease01().
     //   5) Anticipation 300 ms : la transition commence AVANT le timestamp exact
     //      → la ligne est en place au moment où le chanteur prononce le mot.
-    {
+    if (hasLyrics) {   // sans lyrics : bloc SKIPPÉ → pochette + carte centrées, rien d'autre
         std::lock_guard<std::mutex> lk(m_lyrMtx);
         // Pas de nappe : les lyrics flottent directement sur le fond flouté.
         float lx  = lyrL;                 // colonne droite

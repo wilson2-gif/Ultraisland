@@ -180,12 +180,13 @@ void Renderer::Release() {
     m_rt = nullptr;
     m_glass.Release();
     SR(m_dw); SR(m_f);
-    SR(m_albumArt); SR(m_wicFactory);
+    SR(m_albumArt); SR(m_albumBlurred); SR(m_wicFactory);
 }
 
 void Renderer::UpdateAlbumArt(const std::vector<uint8_t>& data) {
     if(data.empty()){
         if(m_albumArt){ m_albumArt->Release(); m_albumArt=nullptr; }
+        if(m_albumBlurred){ m_albumBlurred->Release(); m_albumBlurred=nullptr; }
         m_currentThumbnailData.clear();
         m_albumAccent = {0.40f, 0.42f, 0.50f, 1.f};   // accent neutre
         return;
@@ -221,6 +222,46 @@ void Renderer::UpdateAlbumArt(const std::vector<uint8_t>& data) {
             }
         }
         stream->Release();
+    }
+    BuildBlurredAlbum();   // pré-floute la nouvelle pochette (couverture DPI correcte)
+}
+
+// Pré-floute m_albumArt dans un bitmap intermédiaire m_albumBlurred (1×/titre).
+// Utilisé ensuite comme BITMAP-BRUSH + FillGeometry (respecte le DPI nativement),
+// au lieu d'un DrawImage par frame dont la couverture DPI était instable (moitié
+// d'encoche noire). Bonus perf : le GaussianBlur n'est plus calculé chaque frame.
+void Renderer::BuildBlurredAlbum() {
+    if(m_albumBlurred){ m_albumBlurred->Release(); m_albumBlurred=nullptr; }
+    if(!m_albumArt) return;
+    ID2D1DeviceContext* dc = m_glass.DC();
+    if(!dc) return;
+    D2D1_SIZE_F as = m_albumArt->GetSize();
+    UINT bw=(UINT)std::max(16.f, as.width), bh=(UINT)std::max(16.f, as.height);
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ID2D1Bitmap1* interm=nullptr;
+    if(FAILED(dc->CreateBitmap(D2D1::SizeU(bw,bh), nullptr, 0, bp, &interm)) || !interm) return;
+    ID2D1Effect* blur=nullptr;
+    if(SUCCEEDED(dc->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) && blur){
+        blur->SetInput(0, m_albumArt);
+        blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 16.f);
+        blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+        ID2D1Image* oldTarget=nullptr; dc->GetTarget(&oldTarget);
+        D2D1_MATRIX_3X2_F oldXf; dc->GetTransform(&oldXf);
+        dc->SetTarget(interm);
+        dc->SetTransform(D2D1::Matrix3x2F::Identity());
+        dc->BeginDraw();
+        dc->Clear(D2D1::ColorF(0,0,0,0));
+        dc->DrawImage(blur);
+        dc->EndDraw();
+        dc->SetTarget(oldTarget);
+        dc->SetTransform(oldXf);
+        if(oldTarget) oldTarget->Release();
+        blur->Release();
+        m_albumBlurred = interm;   // conservé
+    } else {
+        interm->Release();
     }
 }
 
@@ -388,47 +429,27 @@ void Renderer::DrawLiquidPill(float px, float pw, float ph, const IslandContent&
     // ── FOND : mode adaptatif = POCHETTE FLOUTÉE clippée au pill (signature
     // Apple) ; sinon verre teinté à l'accent choisi dans le Cockpit.
     bool artBg = false;
-    if (PillRT::ADAPTIVE && m_albumArt && m_pillGeometry) {
-        ID2D1DeviceContext* dc = m_glass.DC();
-        if (dc) {
-            if (!m_fxBlur) {
-                dc->CreateEffect(CLSID_D2D1GaussianBlur, &m_fxBlur);
-                if (m_fxBlur) {
-                    m_fxBlur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 24.f);
-                    m_fxBlur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,
-                                       D2D1_BORDER_MODE_HARD);
-                }
-            }
-            if (m_fxBlur) {
-                m_fxBlur->SetInput(0, m_albumArt);
-                D2D1_SIZE_F as = m_albumArt->GetSize();
-                // PIÈGE DPI (identique à l'ambiant) : dc->DrawImage compose en PIXELS
-                // DEVICE et ignore le SetDpi du RT, alors que le clip PushLayer(pill)
-                // est DPI-scalé jusqu'au pill PHYSIQUE. Si on positionne le flou avec
-                // px/pw/ph LOGIQUES, il ne couvre que pw×ph px device → le (pw*0.25)
-                // droit de la carte musique reste sombre = bande noire à droite. On
-                // exprime donc la cible du flou en DEVICE (× s = dpi/96).
-                float dx, dy; m_rt->GetDpi(&dx, &dy);
-                float s = dx > 0.f ? dx / 96.f : 1.f;
-                float pxD = px*s, pwD = pw*s, phD = ph*s;
-                float scale = std::max(pwD / as.width, phD / as.height) * 1.25f;
-                dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(),
-                                                     m_pillGeometry), nullptr);
-                dc->SetTransform(
-                    D2D1::Matrix3x2F::Scale(scale, scale) *
-                    D2D1::Matrix3x2F::Translation(pxD + (pwD - as.width*scale)*.5f,
-                                                  (phD - as.height*scale)*.5f));
-                dc->DrawImage(m_fxBlur);
-                dc->SetTransform(D2D1::Matrix3x2F::Identity());
-                // Voile sombre NEUTRE (noir) pour la lisibilité du texte : c'est la
-                // POCHETTE FLOUTÉE en dessous qui donne sa couleur à l'encoche, PAS un
-                // voile teinté (un voile coloré masquait la pochette). Opacité réduite
-                // (0.08 + 0.55*BASE_ALPHA) pour laisser la pochette bien transparaître.
-                SetB0({0.f, 0.f, 0.f, 0.08f + 0.55f * PillRT::BASE_ALPHA});
-                m_rt->FillGeometry(m_pillGeometry, m_b0);
-                dc->PopLayer();
-                artBg = true;
-            }
+    if (PillRT::ADAPTIVE && m_albumBlurred && m_pillGeometry) {
+        // Pochette PRÉ-FLOUTÉE en BITMAP-BRUSH + FillGeometry : MÊME repère que le
+        // voile (logique, DPI appliqué une seule fois) → couverture correcte de TOUTE
+        // la carte (fini la moitié noire du DrawImage). Zéro flou par frame (perf).
+        ID2D1BitmapBrush* bb = nullptr;
+        if (SUCCEEDED(m_rt->CreateBitmapBrush(m_albumBlurred, &bb)) && bb) {
+            bb->SetExtendModeX(D2D1_EXTEND_MODE_CLAMP);
+            bb->SetExtendModeY(D2D1_EXTEND_MODE_CLAMP);
+            bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            D2D1_SIZE_F bs = m_albumBlurred->GetSize();
+            float scale = std::max(pw / bs.width, ph / bs.height) * 1.25f;   // COVER
+            float ox = px + (pw - bs.width  * scale) * .5f;
+            float oy =      (ph - bs.height * scale) * .5f;
+            bb->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) *
+                             D2D1::Matrix3x2F::Translation(ox, oy));
+            m_rt->FillGeometry(m_pillGeometry, bb);
+            bb->Release();
+            // Voile sombre NEUTRE pour la lisibilité (la pochette donne la couleur).
+            SetB0({0.f, 0.f, 0.f, 0.08f + 0.55f * PillRT::BASE_ALPHA});
+            m_rt->FillGeometry(m_pillGeometry, m_b0);
+            artBg = true;
         }
     }
     if (!artBg) {

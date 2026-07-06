@@ -157,7 +157,8 @@ public:
     const std::vector<uint8_t>& GetThumbnailData() const { return m_currentThumbnailData; }
 
 private:
-    ID2D1Bitmap* m_albumArt = nullptr;
+    ID2D1Bitmap*  m_albumArt     = nullptr;
+    ID2D1Bitmap1* m_albumBlurred = nullptr;  // pochette PRÉ-FLOUTÉE (1×/titre) → bitmap-brush
     IWICImagingFactory* m_wicFactory = nullptr;
     std::vector<uint8_t> m_currentThumbnailData;
     // Couleur d'accent dérivée de la pochette (signature Apple) + accent courant de la frame
@@ -235,5 +236,6 @@ private:
     void PopSlideClip(float slideX);
 
     void ComputeAlbumAccent(IWICBitmapSource* src);
+    void BuildBlurredAlbum();   // pré-floute m_albumArt → m_albumBlurred (rendu intermédiaire)
     bool CreateDevRes(); void DropDevRes(); void RebuildGrads();
 };

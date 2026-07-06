@@ -16,6 +16,7 @@
 #include <highlevelmonitorconfigurationapi.h>
 #include <winreg.h>
 #include <shellapi.h>
+#include <shobjidl.h>   // IApplicationActivationManager (clic titre → app musicale)
 #include <stdexcept>
 #include <thread>
 #include <string>
@@ -755,6 +756,7 @@ void WindowManager::TriggerMusic(const std::wstring& ti,const std::wstring& ar,
     m_content.musicTitle     = ti;
     m_content.musicArtist    = ar;
     // Nom convivial : "SpotifyAB.SpotifyMusic_zpdnekdr" → "Spotify"
+    m_musicSourceAumid = srcApp;   // AUMID brut → activation au clic du titre
     if(!srcApp.empty()){
         D2D1_COLOR_F _c; std::wstring _g, _friendly;
         ResolveAppStyle(srcApp, _c, _g, _friendly);
@@ -1373,6 +1375,12 @@ void WindowManager::OnMouseUp(int x,int y)
     if(ds==IslandState::MusicExpanded||ds==IslandState::MusicQueue){
         float pw=m_content.pillW, ph=m_content.pillH;
         float px=PillX(ScreenWLogical(),pw), cx2=px+pw*.5f;
+        // Clic sur la zone POCHETTE/TITRE (haut de la carte) → ouvrir l'app musicale.
+        // (au-dessus de la barre de progression à y≈98, en dessous des onglets y≈25)
+        if(y>=26 && y<=64 && x>=(int)(px+12) && x<=(int)(px+pw-24)){
+            ActivateMusicApp();
+            return;
+        }
         float ctrlY=(ds==IslandState::MusicExpanded)
             ?(128.f+(ph-128.f)*.5f):(40.f+54.f+12.f+42.f);
 
@@ -1802,6 +1810,26 @@ void WindowManager::ScanBluetoothAsync()
         if (hwnd) PostMessage(hwnd, WM_ISLAND_BT_RESULT, 0, 0);  // toujours posté
         try { winrt::uninit_apartment(); } catch (...) {}
     }).detach();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ActivateMusicApp — amène l'app musicale (Spotify, etc.) au premier plan quand
+//  on clique sur le titre. Utilise l'AUMID SMTC via IApplicationActivationManager
+//  (API officielle) ; fallback shell:AppsFolder.
+// ─────────────────────────────────────────────────────────────────────────────
+void WindowManager::ActivateMusicApp()
+{
+    if(m_musicSourceAumid.empty()) return;
+    IApplicationActivationManager* mgr=nullptr;
+    if(SUCCEEDED(CoCreateInstance(CLSID_ApplicationActivationManager, nullptr, CLSCTX_ALL,
+                                  IID_PPV_ARGS(&mgr))) && mgr){
+        DWORD pid=0;
+        HRESULT hr = mgr->ActivateApplication(m_musicSourceAumid.c_str(), nullptr, AO_NONE, &pid);
+        mgr->Release();
+        if(SUCCEEDED(hr)) return;
+    }
+    std::wstring cmd = L"shell:AppsFolder\\" + m_musicSourceAumid;
+    ShellExecuteW(nullptr, L"open", cmd.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
