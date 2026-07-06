@@ -16,7 +16,7 @@
          If you want to utilize File and Registry Virtualization for backward 
          compatibility then delete the requestedExecutionLevel node.
     -->
-        <requestedExecutionLevel level="asInvoker" uiAccess="true" />
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
@@ -32,10 +32,12 @@
     </application>
   </compatibility>
 
-  <!-- Indicate that the application is DPI aware and do not scale it. -->
+  <!-- Per-Monitor V2 : netteté parfaite en 125/150/200 %.
+       Fallback dpiAware pour Windows < 10 1703. -->
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <dpiAware    xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">True/PM</dpiAware>
     </windowsSettings>
   </application>
 

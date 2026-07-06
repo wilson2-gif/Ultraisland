@@ -56,6 +56,15 @@ bool TrayIcon::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case IDM_TRAY_NOTIF:
             if (OnTestNotif) OnTestNotif();
             return true;
+        case IDM_TRAY_SPOTIFY:
+            if (OnConnectSpotify) OnConnectSpotify();
+            return true;
+        case IDM_TRAY_SETTINGS:
+            if (OnSettings) OnSettings();
+            return true;
+        case IDM_TRAY_AMBIENT:
+            if (OnAmbient) OnAmbient();
+            return true;
         }
     }
 
@@ -67,8 +76,12 @@ void TrayIcon::ShowContextMenu(HWND hwnd)
     HMENU hMenu = CreatePopupMenu();
     if (!hMenu) return;
 
-    AppendMenu(hMenu, MF_STRING, IDM_TRAY_MUSIC, L"▶  Test musique");
-    AppendMenu(hMenu, MF_STRING, IDM_TRAY_NOTIF, L"🔔  Test notification");
+    AppendMenu(hMenu, MF_STRING, IDM_TRAY_SETTINGS,L"⚙  Réglages…");
+    AppendMenu(hMenu, MF_STRING, IDM_TRAY_AMBIENT, L"🌙  Mode ambiant  (Ctrl+Alt+L)");
+    AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenu(hMenu, MF_STRING, IDM_TRAY_MUSIC,   L"▶  Test musique");
+    AppendMenu(hMenu, MF_STRING, IDM_TRAY_NOTIF,   L"🔔  Test notification");
+    AppendMenu(hMenu, MF_STRING, IDM_TRAY_SPOTIFY, L"♫  Connecter Spotify (vraie file)");
     AppendMenu(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(hMenu, MF_STRING, IDM_TRAY_ABOUT, L"Windows Dynamic Island  v1.0");
     AppendMenu(hMenu, MF_GRAYED, IDM_TRAY_ABOUT, nullptr);

@@ -105,27 +105,41 @@
     <ClInclude Include="Core\SettingsWindow.h" />
     <ClInclude Include="Core\TrayIcon.h" />
     <ClInclude Include="Core\WindowManager.h" />
+    <ClInclude Include="Core\AmbientWindow.h" />
+    <ClInclude Include="Core\AppConfig.h" />
+    <ClInclude Include="Core\CockpitWindow.h" />
+    <ClInclude Include="Core\Sounds.h" />
     <ClInclude Include="Graphics\AnimationEngine.h" />
     <ClInclude Include="Graphics\CompositionManager.h" />
+    <ClInclude Include="Graphics\GlassSurface.h" />
     <ClInclude Include="Graphics\Renderer.h" />
     <ClInclude Include="Modules\LockScreenManager.h" />
+    <ClInclude Include="Modules\LyricsClient.h" />
     <ClInclude Include="Modules\MediaManager.h" />
     <ClInclude Include="Modules\NotificationManager.h" />
+    <ClInclude Include="Modules\SpotifyClient.h" />
     <ClInclude Include="Modules\SystemMonitor.h" />
   </ItemGroup>
 
   <!-- ═══ Sources ════════════════════════════════════════════════════════════ -->
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Core\AmbientWindow.cpp" />
+    <ClCompile Include="Core\AppConfig.cpp" />
+    <ClCompile Include="Core\CockpitWindow.cpp" />
+    <ClCompile Include="Core\Sounds.cpp" />
     <ClCompile Include="Core\SettingsWindow.cpp" />
     <ClCompile Include="Core\TrayIcon.cpp" />
     <ClCompile Include="Core\WindowManager.cpp" />
     <ClCompile Include="Graphics\AnimationEngine.cpp" />
     <ClCompile Include="Graphics\CompositionManager.cpp" />
+    <ClCompile Include="Graphics\GlassSurface.cpp" />
     <ClCompile Include="Graphics\Renderer.cpp" />
     <ClCompile Include="Modules\LockScreenManager.cpp" />
+    <ClCompile Include="Modules\LyricsClient.cpp" />
     <ClCompile Include="Modules\MediaManager.cpp" />
     <ClCompile Include="Modules\NotificationManager.cpp" />
+    <ClCompile Include="Modules\SpotifyClient.cpp" />
     <ClCompile Include="Modules\SystemMonitor.cpp" />
   </ItemGroup>
 

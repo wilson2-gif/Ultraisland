@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifeste MSIX UltraIsland — app Win32 full-trust AVEC identité de package.
+  L'identité débloque UserNotificationListener (interception des vraies
+  notifications Windows) et Windows.System.UserProfile.LockScreen.
+  Générer le paquet : packaging\build_msix.ps1
+-->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap3 rescap">
+
+  <Identity Name="Ultraisland.App"
+            Publisher="CN=Ultraisland Dev"
+            Version="2.9.5.0"
+            ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>UltraIsland</DisplayName>
+    <PublisherDisplayName>Ultraisland Dev</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop"
+                        MinVersion="10.0.17763.0"
+                        MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="fr-fr" />
+  </Resources>
+
+  <Applications>
+    <Application Id="UltraIsland"
+                 Executable="WindowsDynamicIsland.exe"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="UltraIsland"
+                          Description="Dynamic Island pour Windows — musique, notifications, contrôles"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png" />
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- App Win32 plein-trust -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Interception des notifications Windows (le but du packaging) -->
+    <uap3:Capability Name="userNotificationListener" />
+  </Capabilities>
+</Package>

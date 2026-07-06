@@ -10,10 +10,13 @@
 // ────────────────────────────────────────────────────────────────────────────
 
 #define WM_TRAY_ICON  (WM_APP + 100)
-#define IDM_TRAY_QUIT  1001
-#define IDM_TRAY_MUSIC 1002
-#define IDM_TRAY_NOTIF 1003
-#define IDM_TRAY_ABOUT 1004
+#define IDM_TRAY_QUIT     1001
+#define IDM_TRAY_MUSIC    1002
+#define IDM_TRAY_NOTIF    1003
+#define IDM_TRAY_ABOUT    1004
+#define IDM_TRAY_SPOTIFY  1005
+#define IDM_TRAY_SETTINGS 1006
+#define IDM_TRAY_AMBIENT  1007
 
 class TrayIcon
 {
@@ -31,6 +34,9 @@ public:
     std::function<void()>                  OnQuit;
     std::function<void()>                  OnTestMusic;
     std::function<void()>                  OnTestNotif;
+    std::function<void()>                  OnConnectSpotify;
+    std::function<void()>                  OnSettings;
+    std::function<void()>                  OnAmbient;
 
 private:
     NOTIFYICONDATA m_nid = {};

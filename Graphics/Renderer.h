@@ -11,6 +11,7 @@
 #pragma comment(lib,"windowscodecs.lib")
 #include <vector>
 #include "../Core/IslandDim.h"
+#include "GlassSurface.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  AppBadge — badge non-lu par application (affiché sur le pill idle)
@@ -42,6 +43,14 @@ struct WifiNetworkItem {
     std::wstring ssid;
     bool         connected   = false;
     int          signal      = 0;   // 0..100
+    bool         secured     = false;   // WPA/WEP → mot de passe requis si non enregistré
+    bool         hasProfile  = false;   // profil déjà enregistré → connexion directe
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+struct BtDeviceItem {
+    std::wstring name;
+    bool         connected   = false;   // « connecté » affiché en dessous
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +114,15 @@ struct IslandContent {
     // Wi-Fi network list (WifiList state)
     std::vector<WifiNetworkItem> wifiNetworks;
     int   wifiConnectingIdx = -1;   // -1 = aucun en cours
+    // Saisie du mot de passe in-island (réseau sécurisé non enregistré)
+    bool         wifiPassMode = false;      // panneau de saisie mot de passe affiché
+    std::wstring wifiPassSsid;              // SSID en cours de connexion
+    std::wstring wifiPassText;              // mot de passe tapé (masqué à l'affichage)
+    std::wstring wifiStatusMsg;             // « Connexion… » / « Échec » etc.
+
+    // Bluetooth device list (BluetoothList state)
+    std::vector<BtDeviceItem> btDevices;
+    std::wstring btStatusMsg;               // message d'état (connexion/limite)
 
     std::wstring clockTime, clockDate;
     bool        isHovered = false;
@@ -116,6 +134,7 @@ struct IslandContent {
     int   activeMenuIndex = 1;
     bool  showQueue       = false;
     float bellShakeT      = 0.f;
+    float queueScrollY    = 0.f;   // défilement (px) de la liste Playing Next
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,19 +143,26 @@ public:
     Renderer(); ~Renderer();
     bool Initialize(HWND hwnd);
     void Resize(UINT w, UINT h);
+    void SetDpi(float dpi);            // DPI Per-Monitor V2 → SetDpi sur le DC
     void Draw(const IslandContent& c);
     void Release();
     
     void UpdateAlbumArt(const std::vector<uint8_t>& data);
     ID2D1Bitmap* GetAlbumArt() const { return m_albumArt; }
+    D2D1_COLOR_F GetAlbumAccent() const { return m_albumAccent; }
+    const std::vector<uint8_t>& GetThumbnailData() const { return m_currentThumbnailData; }
 
 private:
     ID2D1Bitmap* m_albumArt = nullptr;
     IWICImagingFactory* m_wicFactory = nullptr;
     std::vector<uint8_t> m_currentThumbnailData;
-    ID2D1Factory1*            m_f   = nullptr;
-    ID2D1HwndRenderTarget*    m_rt  = nullptr;
-    IDWriteFactory3*          m_dw  = nullptr;
+    // Couleur d'accent dérivée de la pochette (signature Apple) + accent courant de la frame
+    D2D1_COLOR_F m_albumAccent = {0.40f, 0.42f, 0.50f, 1.f};
+    D2D1_COLOR_F m_accent      = {0.235f, 0.6f, 1.f, 1.f};
+    ID2D1Factory1*            m_f       = nullptr;
+    GlassSurface              m_glass;          // DComp + swap-chain + DeviceContext
+    ID2D1RenderTarget*        m_rt      = nullptr;  // = m_glass.DC() (cast)
+    IDWriteFactory3*          m_dw      = nullptr;
     ID2D1SolidColorBrush*     m_b0  = nullptr;
     ID2D1SolidColorBrush*     m_b1  = nullptr;
     ID2D1LinearGradientBrush* m_bSh = nullptr;
@@ -144,6 +170,8 @@ private:
     ID2D1RadialGradientBrush* m_bGl = nullptr;
     ID2D1LinearGradientBrush* m_bGlass = nullptr;
     ID2D1LinearGradientBrush* m_bBorder = nullptr;  // bordure réflexion glass
+    ID2D1BitmapBrush*         m_bGrain  = nullptr;  // texture bruit (Cockpit)
+    ID2D1Effect*              m_fxBlur  = nullptr;  // flou pochette (fond adaptatif)
 
     IDWriteTextFormat *m_fT=nullptr, *m_fS=nullptr, *m_fX=nullptr;
     IDWriteTextFormat *m_fC=nullptr, *m_fH=nullptr;
@@ -165,6 +193,7 @@ private:
     void DrawHUD           (float px, float pw, float ph, const IslandContent& c);
     void DrawSystem        (float px, float pw, float ph, const IslandContent& c);
     void DrawWifiList      (float px, float pw, float ph, const IslandContent& c);
+    void DrawBluetoothList (float px, float pw, float ph, const IslandContent& c);
 
     void DrawTopIcons      (float px, float pw, float alpha, int activeMenu, float bellShakeT, float slideX = 0.f);
     void DrawAlbumArt      (float x, float y, float s, float alpha, ID2D1Bitmap* bmp = nullptr);
@@ -201,5 +230,6 @@ private:
     void PushSlideClip(float px, float pw, float ph, float slideX);
     void PopSlideClip(float slideX);
 
+    void ComputeAlbumAccent(IWICBitmapSource* src);
     bool CreateDevRes(); void DropDevRes(); void RebuildGrads();
 };

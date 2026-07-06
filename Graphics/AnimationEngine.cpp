@@ -5,14 +5,17 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// ── Smooth ease-out animation (no overshoot) ──────────────────────────
+// ── Ressort très amorti — mouvement DOUX, quasi sans rebond ───────────────────
+//  ζ=0.85 → dépassement < 1% (imperceptible) : décélération soyeuse, pas de « boing ».
+//  Le décalage W/H/CR + le squash léger suffisent à garder le caractère « liquid ».
 float AnimationEngine::Spring(float t) {
     if (t <= 0) return 0.f;
     if (t >= 1) return 1.f;
-    
-    // Ease-out cubique simple pour une fluidité sans rebond
-    float u = 1.f - t;
-    return 1.f - (u * u * u);
+    const float omega = 8.0f;    // fréquence propre
+    const float zeta  = 0.85f;   // fort amortissement → mouvement doux
+    float wd  = omega * sqrtf(1.f - zeta*zeta);
+    float env = expf(-zeta * omega * t);
+    return 1.f - env * (cosf(wd * t) + (zeta * omega / wd) * sinf(wd * t));
 }
 
 float AnimationEngine::Cubic(float t) {
@@ -32,7 +35,8 @@ std::pair<float, float> AnimationEngine::PillSizeOf(IslandState s) {
     case IslandState::HUDNetwork:                return {Pill::W_HUD,        Pill::H_HUD};
     case IslandState::SystemExpanded:            return {Pill::W_SYS,        Pill::H_SYS};
     case IslandState::WifiList:                  return {Pill::W_WIFI,       Pill::H_WIFI};
-    default:                                     return {Pill::W_IDLE,       Pill::H_IDLE};
+    case IslandState::BluetoothList:             return {Pill::W_BT,         Pill::H_BT};
+    default:                                     return {PillRT::W_IDLE,     PillRT::H_IDLE};   // idle = runtime (Cockpit)
     }
 }
 
@@ -172,9 +176,9 @@ float AnimationEngine::GetWobblePhase() const
 float AnimationEngine::GetSquashFactor() const
 {
     if (!m_animating) return 1.f;
-    // Bell plus large et amplitude réduite pour éviter l'effet "rebond"
-    float bell = expf(-12.f * (m_t - 0.25f) * (m_t - 0.25f));
+    // Bell centrée sur le pic de vitesse ; amplitude discrète (mouvement doux)
+    float bell = expf(-11.f * (m_t - 0.28f) * (m_t - 0.28f));
     bool expanding = (m_dstPH > m_srcPH + 4.f);
-    float squeeze = bell * 0.02f;
+    float squeeze = bell * 0.020f;
     return expanding ? (1.f - squeeze) : (1.f + squeeze);
 }

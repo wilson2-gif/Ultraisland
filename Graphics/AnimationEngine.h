@@ -48,13 +48,13 @@ private:
     IslandState m_currentState = IslandState::Idle;
     IslandState m_targetState  = IslandState::Idle;
 
-    // Tailles pill src/dst
-    float m_srcPW = Pill::W_IDLE, m_srcPH = Pill::H_IDLE;
-    float m_dstPW = Pill::W_IDLE, m_dstPH = Pill::H_IDLE;
+    // Tailles pill src/dst (défauts = runtime, appliqués avant construction)
+    float m_srcPW = PillRT::W_IDLE, m_srcPH = PillRT::H_IDLE;
+    float m_dstPW = PillRT::W_IDLE, m_dstPH = PillRT::H_IDLE;
 
     // Corner radius src/dst
-    float m_srcCR = Pill::CR_IDLE;
-    float m_dstCR = Pill::CR_IDLE;
+    float m_srcCR = PillRT::CR_IDLE;
+    float m_dstCR = PillRT::CR_IDLE;
 
     int    m_screenW    = 1920;
     float  m_t          = 1.f;
