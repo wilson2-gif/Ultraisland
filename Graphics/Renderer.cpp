@@ -404,9 +404,11 @@ void Renderer::DrawLiquidPill(float px, float pw, float ph, const IslandContent&
     // Phase B : formes Goutte (3) & Courbe (4) — biais géométrique bas asymétrique
     if(PillRT::SHAPE == 3){ dyL += ph*0.10f; dyR += ph*0.10f; }       // Goutte : bord bas descend
     else if(PillRT::SHAPE == 4){ dyL -= ph*0.03f; dyR += ph*0.08f; }  // Courbe : incliné droite
-    float earR   = 8.0f;
-    float earFade= std::clamp(1.0f-(ph-Pill::H_IDLE)/60.f, 0.0f, 1.0f);
-    float eR     = earR * earFade;
+    // HAUT plat, COLLÉ au bord haut de l'écran (y=0) avec un très léger arrondi ;
+    // BAS bien arrondi. Plus d'« oreilles » (elles faisaient flotter l'encoche) :
+    // le bord supérieur fusionne avec le haut de l'écran → l'encoche « coule » du haut.
+    float cb = std::min(cr, ph * 0.5f);                          // rayon BAS (borné)
+    float tr = std::min(6.f, std::min(ph * 0.4f, pw * 0.4f));    // léger arrondi HAUT
 
     if(m_pillGeometry){ m_pillGeometry->Release(); m_pillGeometry=nullptr; }
     m_f->CreatePathGeometry(&m_pillGeometry);
@@ -414,14 +416,15 @@ void Renderer::DrawLiquidPill(float px, float pw, float ph, const IslandContent&
     m_pillGeometry->Open(&sink);
     if(sink){
         sink->SetFillMode(D2D1_FILL_MODE_WINDING);
-        sink->BeginFigure({px-eR, 0.f}, D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddBezier({{px-eR*0.45f, 0.f},{px, eR*0.45f},{px, eR}});
-        sink->AddLine({px, ph-cr});
-        sink->AddBezier({{px, ph-cr*0.45f+dyL},{px+cr*0.45f, ph+dyL},{px+cr, ph+dyL}});
-        sink->AddLine({px+pw-cr, ph+dyR});
-        sink->AddBezier({{px+pw-cr*0.45f, ph+dyR},{px+pw, ph-cr*0.45f+dyR},{px+pw, ph-cr}});
-        sink->AddLine({px+pw, eR});
-        sink->AddBezier({{px+pw, eR*0.45f},{px+pw+eR*0.45f, 0.f},{px+pw+eR, 0.f}});
+        sink->BeginFigure({px+tr, 0.f}, D2D1_FIGURE_BEGIN_FILLED);                    // haut-gauche
+        sink->AddLine({px+pw-tr, 0.f});                                               // bord HAUT (y=0)
+        sink->AddBezier({{px+pw-tr*0.45f, 0.f},{px+pw, tr*0.45f},{px+pw, tr}});       // coin haut-droit
+        sink->AddLine({px+pw, ph-cb+dyR});                                           // bord droit
+        sink->AddBezier({{px+pw, ph-cb*0.45f+dyR},{px+pw-cb*0.45f, ph+dyR},{px+pw-cb, ph+dyR}}); // bas-droit
+        sink->AddLine({px+cb, ph+dyL});                                             // bord BAS
+        sink->AddBezier({{px+cb*0.45f, ph+dyL},{px, ph-cb*0.45f+dyL},{px, ph-cb}});   // bas-gauche
+        sink->AddLine({px, tr});                                                    // bord gauche
+        sink->AddBezier({{px, tr*0.45f},{px+tr*0.45f, 0.f},{px+tr, 0.f}});            // coin haut-gauche
         sink->EndFigure(D2D1_FIGURE_END_CLOSED);
         sink->Close(); sink->Release();
     }
@@ -480,10 +483,7 @@ void Renderer::DrawLiquidPill(float px, float pw, float ph, const IslandContent&
     }
 
     // Liseret blanc fin sur le contour (signature Liquid Glass)
-    if(m_pillGeometry){
-        SetB1({1.f, 1.f, 1.f, 0.22f});
-        m_rt->DrawGeometry(m_pillGeometry, m_b1, 1.0f);
-    }
+    // (Liseret / bordure retiré — demande utilisateur : aucune bordure sur l'encoche.)
 
     // Ombre portée (subtile, comme iOS)
     if(ph > Pill::H_IDLE*1.5f && m_bSd){
