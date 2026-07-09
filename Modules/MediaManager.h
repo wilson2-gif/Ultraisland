@@ -21,6 +21,8 @@ public:
     void PlayPause();
     void SkipNext();
     void SkipPrevious();
+    void SeekTo(double seconds);      // positionne la lecture (SMTC)
+    void RequestRefresh();            // resync manuelle (filet anti-events perdus)
     bool IsSessionActive() const;
 
     void SetMediaChangedCallback(
@@ -29,9 +31,14 @@ public:
                            const std::wstring& sourceApp,
                            bool playing,
                            float progress,
+                           float durationSec,
                            const std::vector<uint8_t>& thumbnailData)> callback);
 
 private:
+    // Choisit la MEILLEURE session média : la première EN LECTURE (VLC, Chrome,
+    // etc.), pas seulement la « courante » de Windows (souvent Spotify en pause).
+    winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession PickBestSession();
+
     void SubscribeToSession(winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession const& session);
     void UnsubscribeFromSession();
     winrt::fire_and_forget UpdateMediaInfoAsync();
@@ -45,6 +52,7 @@ private:
                        const std::wstring&,
                        const std::wstring&,
                        bool,
+                       float,
                        float,
                        const std::vector<uint8_t>&)> m_callback;
 

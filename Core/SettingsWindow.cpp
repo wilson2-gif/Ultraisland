@@ -1,8 +1,11 @@
 #include "SettingsWindow.h"
 #include <dwmapi.h>
 #include <commctrl.h>
+#include <uxtheme.h>
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "msimg32.lib")
 
 // ── IDs ──────────────────────────────────────────────────────────────────────
 #define ID_CHK_ISLAND   200
@@ -13,19 +16,25 @@
 #define ID_CHK_STARTUP  205
 #define ID_BTN_LAUNCH   206
 #define ID_BTN_QUIT     207
+#define ID_CHK_ADMIN    208
 
-// ── Couleurs ─────────────────────────────────────────────────────────────────
-static const COLORREF C_BG     = RGB(15,  15,  20 );
-static const COLORREF C_CARD   = RGB(26,  26,  34 );
-static const COLORREF C_LINE   = RGB(48,  48,  60 );
-static const COLORREF C_WHITE  = RGB(235, 235, 242);
-static const COLORREF C_GRAY   = RGB(130, 130, 148);
-static const COLORREF C_GREEN  = RGB(48,  205, 115);
-static const COLORREF C_GBTN   = RGB(38,  175,  95);
+// ── Palette Liquid Glass dark (cohérente avec l'encoche) ─────────────────────
+static const COLORREF C_BG      = RGB(12,  12,  16 );   // fond très sombre
+static const COLORREF C_CARD    = RGB(22,  22,  28 );   // carte
+static const COLORREF C_CARD_BD = RGB(38,  38,  46 );   // bordure carte
+static const COLORREF C_WHITE   = RGB(240, 240, 245);
+static const COLORREF C_SUBTLE  = RGB(160, 160, 174);
+static const COLORREF C_MUTED   = RGB(110, 110, 124);
+static const COLORREF C_ACCENT  = RGB( 60, 152, 255);   // bleu iOS
+static const COLORREF C_ACCENT2 = RGB( 96, 174, 255);
+static const COLORREF C_TRACK_OFF = RGB(52, 52, 62);   // rail du switch éteint
 
-static const int W = 480;
-static const int H = 590;
-static const int PAD = 28;
+static const int W      = 500;
+static const int H      = 750;     // 5 cartes (la dernière finit ~666) + marge ; plus de boutons
+static const int PAD    = 24;
+static const int CARD_R = 14;
+static const int SWITCH_W = 42;
+static const int SWITCH_H = 24;
 
 // ─────────────────────────────────────────────────────────────────────────────
 SettingsWindow::SettingsWindow() = default;
@@ -35,7 +44,11 @@ SettingsWindow::~SettingsWindow()
     if (m_fontTitle)   DeleteObject(m_fontTitle);
     if (m_fontSection) DeleteObject(m_fontSection);
     if (m_fontNormal)  DeleteObject(m_fontNormal);
+    if (m_fontSub)     DeleteObject(m_fontSub);
+    if (m_fontHeader)  DeleteObject(m_fontHeader);
     if (m_bgBrush)     DeleteObject(m_bgBrush);
+    if (m_cardBrush)   DeleteObject(m_cardBrush);
+    if (m_accentBrush) DeleteObject(m_accentBrush);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,19 +56,20 @@ bool SettingsWindow::ShowAndWait(HINSTANCE hInstance, AppSettings& settings)
 {
     m_settings = &settings;
 
-    m_fontTitle   = CreateFont(20,0,0,0,FW_BOLD,    0,0,0,DEFAULT_CHARSET,
-                    OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH, L"Segoe UI Variable Display");
+    auto MakeFont = [](int sz, int weight, const wchar_t* face){
+        return CreateFont(sz, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH, face);
+    };
+    m_fontHeader  = MakeFont(28, FW_SEMIBOLD, L"Segoe UI Variable Display");
+    m_fontTitle   = MakeFont(18, FW_SEMIBOLD, L"Segoe UI Variable Display");
+    m_fontSection = MakeFont(11, FW_BOLD,     L"Segoe UI Variable Small");
+    m_fontNormal  = MakeFont(14, FW_NORMAL,   L"Segoe UI Variable Text");
+    m_fontSub     = MakeFont(12, FW_NORMAL,   L"Segoe UI Variable Small");
 
-    m_fontSection = CreateFont(11,0,0,0,FW_SEMIBOLD, 0,0,0,DEFAULT_CHARSET,
-                    OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH, L"Segoe UI Variable");
-
-    m_fontNormal  = CreateFont(13,0,0,0,FW_NORMAL,   0,0,0,DEFAULT_CHARSET,
-                    OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
-                    DEFAULT_PITCH, L"Segoe UI Variable");
-
-    m_bgBrush = CreateSolidBrush(C_BG);
+    m_bgBrush     = CreateSolidBrush(C_BG);
+    m_cardBrush   = CreateSolidBrush(C_CARD);
+    m_accentBrush = CreateSolidBrush(C_ACCENT);
 
     WNDCLASSEX wc    = {};
     wc.cbSize        = sizeof(wc);
@@ -70,19 +84,24 @@ bool SettingsWindow::ShowAndWait(HINSTANCE hInstance, AppSettings& settings)
     int px = (GetSystemMetrics(SM_CXSCREEN) - W) / 2;
     int py = (GetSystemMetrics(SM_CYSCREEN) - H) / 2;
 
+    // WS_CLIPCHILDREN : le WM_PAINT custom du parent ne dessine plus par-dessus
+    //                   les contrôles enfants (switches/boutons) → clics fiables.
     m_hwnd = CreateWindowEx(
         WS_EX_APPWINDOW,
         L"WDI_Settings",
         L"Ultraisland",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
         px, py, W, H,
         nullptr, nullptr, hInstance, this);
 
     if (!m_hwnd) return false;
 
-    // Activer le dark mode sur la barre de titre (Windows 10 20H1+)
+    // Dark mode sur la barre de titre (Windows 10 20H1+)
     BOOL dark = TRUE;
     DwmSetWindowAttribute(m_hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+    // Coins arrondis Windows 11 (DWMWA_WINDOW_CORNER_PREFERENCE = 33, ROUND = 2)
+    int corner = 2;
+    DwmSetWindowAttribute(m_hwnd, 33, &corner, sizeof(corner));
 
     ShowWindow(m_hwnd, SW_SHOW);
     UpdateWindow(m_hwnd);
@@ -97,107 +116,72 @@ bool SettingsWindow::ShowAndWait(HINSTANCE hInstance, AppSettings& settings)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  CreateControls — positions calculées dynamiquement (pas de hardcode Y)
+//  CreateControls — cartes + switches owner-draw
 // ─────────────────────────────────────────────────────────────────────────────
 void SettingsWindow::CreateControls()
 {
     HINSTANCE hi = GetModuleHandle(nullptr);
-    int cw = W - PAD * 2;
-    int y  = 20;
 
-    auto Label = [&](const wchar_t* t, int dy, HFONT f, int indent = 0) {
-        HWND h = CreateWindowW(L"STATIC", t,
-            WS_CHILD|WS_VISIBLE|SS_LEFT,
-            PAD+indent, y, cw-indent, dy, m_hwnd,
-            nullptr, hi, nullptr);
-        SendMessage(h, WM_SETFONT, (WPARAM)f, TRUE);
-        y += dy + 4;
+    // Le header occupe ~95 px en haut. Y de départ des cartes.
+    int y = 110;
+
+    auto Card = [&](int rows, int slot){
+        // rows = nb de switches dans la carte (1 switch = 44 px)
+        int extraH = 18 + 22;   // padding interne haut+bas + label de section
+        int h = extraH + rows * 44;
+        m_cards[slot] = { y, h };
+        y += h + 12;
+    };
+
+    // ── Switch owner-draw (BS_OWNERDRAW) ; l'état est stocké dans m_toggle ──
+    auto Switch = [&](UINT id, bool on, int cardSlot, int rowInCard){
+        int sy = m_cards[cardSlot].y + 16 /*pad*/ + 22 /*label section*/ + rowInCard * 44;
+        int x  = PAD + 16;
+        int w  = W - PAD*2 - 32;
+        HWND h = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_TABSTOP,
+            x, sy, w, 38, m_hwnd, (HMENU)(UINT_PTR)id, hi, nullptr);
+        m_toggle[id] = on;   // ← source de vérité (BM_SETCHECK non fiable sur OWNERDRAW)
         return h;
     };
 
-    auto Check = [&](const wchar_t* t, UINT id, bool on) {
-        HWND h = CreateWindowW(L"BUTTON", t,
-            WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX,
-            PAD+8, y, cw-8, 22, m_hwnd,
-            (HMENU)(UINT_PTR)id, hi, nullptr);
-        SendMessage(h, WM_SETFONT,   (WPARAM)m_fontNormal, TRUE);
-        SendMessage(h, BM_SETCHECK,  on ? BST_CHECKED : BST_UNCHECKED, 0);
-        y += 26;
-        return h;
-    };
+    // Slot 0 : GENERAL (3 lignes : island, startup, admin)
+    // « Activer Dynamic Island » démarre sur OFF : le basculer sur ON = LANCER l'île.
+    Card(3, 0);
+    m_chkIsland  = Switch(ID_CHK_ISLAND,  false,                        0, 0);
+    m_chkStartup = Switch(ID_CHK_STARTUP, m_settings->startWithWindows, 0, 1);
+    m_chkAdmin   = Switch(ID_CHK_ADMIN,   m_settings->runAsAdmin,       0, 2);
 
-    auto Sub = [&](const wchar_t* t) {
-        HWND h = CreateWindowW(L"STATIC", t,
-            WS_CHILD|WS_VISIBLE|SS_LEFT,
-            PAD+10, y, cw-10, 15, m_hwnd,
-            nullptr, hi, nullptr);
-        SendMessage(h, WM_SETFONT, (WPARAM)m_fontSection, TRUE);
-        y += 20;
-        return h;
-    };
+    // Slot 1 : MUSIQUE (1 ligne)
+    Card(1, 1);
+    m_chkMusic = Switch(ID_CHK_MUSIC, m_settings->musicEnabled, 1, 0);
 
-    // Séparateur visuel (ligne via STATIC SS_ETCHEDHORZ ne marche pas en dark)
-    // On utilise WM_PAINT pour les lignes — juste avancer Y ici
-    auto Sep = [&]() { y += 10; };
+    // Slot 2 : NOTIFICATIONS (1 ligne)
+    Card(1, 2);
+    m_chkNotif = Switch(ID_CHK_NOTIF, m_settings->notifEnabled, 2, 0);
 
-    // ── Titre ────────────────────────────────────────────────────────────
-    Label(L"Windows Dynamic Island", 26, m_fontTitle);
-    Label(L"Activez les modules avant de lancer.", 18, m_fontSection);
-    m_sepY[0] = y + 4; Sep();
+    // Slot 3 : SYSTÈME (1 ligne)
+    Card(1, 3);
+    m_chkSystem = Switch(ID_CHK_SYSTEM, m_settings->systemEnabled, 3, 0);
 
-    // ── General ───────────────────────────────────────────────────────────
-    Label(L"GENERAL", 16, m_fontSection);
-    m_chkIsland  = Check(L"  Activer Dynamic Island (pilule flottante)", ID_CHK_ISLAND,  m_settings->islandEnabled);
-    m_chkStartup = Check(L"  Demarrer avec Windows",                     ID_CHK_STARTUP, m_settings->startWithWindows);
-    m_sepY[1] = y + 4; Sep();
+    // Slot 4 : VERROUILLAGE (1 ligne)
+    Card(1, 4);
+    m_chkLock = Switch(ID_CHK_LOCK, m_settings->lockScreenEnabled, 4, 0);
 
-    // ── Musique ───────────────────────────────────────────────────────────
-    Label(L"MUSIQUE", 16, m_fontSection);
-    m_chkMusic = Check(L"  Afficher la musique en cours  (SMTC)", ID_CHK_MUSIC, m_settings->musicEnabled);
-    Sub(L"  Spotify, YouTube Music, VLC, Windows Media Player...");
-    m_sepY[2] = y + 4; Sep();
-
-    // ── Notifications ─────────────────────────────────────────────────────
-    Label(L"NOTIFICATIONS", 16, m_fontSection);
-    m_chkNotif = Check(L"  Afficher les notifications systeme", ID_CHK_NOTIF, m_settings->notifEnabled);
-    Sub(L"  Discord, Outlook, Teams, WhatsApp...");
-    m_sepY[3] = y + 4; Sep();
-
-    // ── Systeme ───────────────────────────────────────────────────────────
-    Label(L"SYSTEME", 16, m_fontSection);
-    m_chkSystem = Check(L"  Afficher CPU / RAM / Reseau (clic sur la pilule)", ID_CHK_SYSTEM, m_settings->systemEnabled);
-    m_sepY[4] = y + 4; Sep();
-
-    // ── Ecran de verrouillage ─────────────────────────────────────────────
-    Label(L"ECRAN DE VERROUILLAGE", 16, m_fontSection);
-    m_chkLock = Check(L"  Retracter l'island au verrouillage", ID_CHK_LOCK, m_settings->lockScreenEnabled);
-
-    y += 14;
-
-    // ── Boutons ───────────────────────────────────────────────────────────
-    m_btnLaunch = CreateWindowW(L"BUTTON", L"  Activer Dynamic Island",
-        WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON|BS_FLAT,
-        PAD, y, cw - 120, 40, m_hwnd,
-        (HMENU)ID_BTN_LAUNCH, hi, nullptr);
-    SendMessage(m_btnLaunch, WM_SETFONT, (WPARAM)m_fontNormal, TRUE);
-
-    m_btnQuit = CreateWindowW(L"BUTTON", L"Quitter",
-        WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON|BS_FLAT,
-        W - PAD - 110, y, 110, 40, m_hwnd,
-        (HMENU)ID_BTN_QUIT, hi, nullptr);
-    SendMessage(m_btnQuit, WM_SETFONT, (WPARAM)m_fontNormal, TRUE);
+    // Plus de gros boutons : le switch « Activer Dynamic Island » EST le déclencheur.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void SettingsWindow::ApplySettings()
 {
     if (!m_settings) return;
-    m_settings->islandEnabled     = (SendMessage(m_chkIsland,  BM_GETCHECK,0,0)==BST_CHECKED);
-    m_settings->musicEnabled      = (SendMessage(m_chkMusic,   BM_GETCHECK,0,0)==BST_CHECKED);
-    m_settings->notifEnabled      = (SendMessage(m_chkNotif,   BM_GETCHECK,0,0)==BST_CHECKED);
-    m_settings->systemEnabled     = (SendMessage(m_chkSystem,  BM_GETCHECK,0,0)==BST_CHECKED);
-    m_settings->lockScreenEnabled = (SendMessage(m_chkLock,    BM_GETCHECK,0,0)==BST_CHECKED);
-    m_settings->startWithWindows  = (SendMessage(m_chkStartup, BM_GETCHECK,0,0)==BST_CHECKED);
+    m_settings->islandEnabled     = m_toggle[ID_CHK_ISLAND];
+    m_settings->musicEnabled      = m_toggle[ID_CHK_MUSIC];
+    m_settings->notifEnabled      = m_toggle[ID_CHK_NOTIF];
+    m_settings->systemEnabled     = m_toggle[ID_CHK_SYSTEM];
+    m_settings->lockScreenEnabled = m_toggle[ID_CHK_LOCK];
+    m_settings->startWithWindows  = m_toggle[ID_CHK_STARTUP];
+    m_settings->runAsAdmin        = m_toggle[ID_CHK_ADMIN];
     SetStartupRegistry(m_settings->startWithWindows);
 }
 
@@ -219,6 +203,84 @@ void SettingsWindow::SetStartupRegistry(bool enable)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Dessin d'une carte arrondie (fond légèrement plus clair que le bg)
+// ─────────────────────────────────────────────────────────────────────────────
+void SettingsWindow::DrawCard(HDC hdc, int x, int y, int w, int h)
+{
+    // Fond carte
+    HBRUSH bf = CreateSolidBrush(C_CARD);
+    HPEN   bp = CreatePen(PS_SOLID, 1, C_CARD_BD);
+    HBRUSH oldBr = (HBRUSH)SelectObject(hdc, bf);
+    HPEN   oldPn = (HPEN)  SelectObject(hdc, bp);
+    RoundRect(hdc, x, y, x+w, y+h, CARD_R*2, CARD_R*2);
+    SelectObject(hdc, oldBr);
+    SelectObject(hdc, oldPn);
+    DeleteObject(bf);
+    DeleteObject(bp);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Switch iOS — fond du contrôle BS_OWNERDRAW
+//  rc = rect total du contrôle ; on dessine : label gauche + switch droite
+// ─────────────────────────────────────────────────────────────────────────────
+void SettingsWindow::DrawSwitch(HDC hdc, const RECT& rc, bool on, bool /*hovered*/)
+{
+    const int sw = SWITCH_W, sh = SWITCH_H;
+    int sx = rc.right - sw - 4;
+    int sy = rc.top + (rc.bottom - rc.top - sh) / 2;
+
+    // Rail
+    HBRUSH br = CreateSolidBrush(on ? C_ACCENT : C_TRACK_OFF);
+    HPEN   pn = CreatePen(PS_SOLID, 1, on ? C_ACCENT2 : RGB(70,70,82));
+    HBRUSH ob = (HBRUSH)SelectObject(hdc, br);
+    HPEN   op = (HPEN)  SelectObject(hdc, pn);
+    RoundRect(hdc, sx, sy, sx+sw, sy+sh, sh, sh);
+    SelectObject(hdc, ob); SelectObject(hdc, op);
+    DeleteObject(br); DeleteObject(pn);
+
+    // Bouton (cercle blanc)
+    int knobR = (sh - 6) / 2;
+    int knobCx = on ? (sx + sw - knobR - 3) : (sx + knobR + 3);
+    int knobCy = sy + sh / 2;
+    HBRUSH kb = CreateSolidBrush(C_WHITE);
+    HPEN   kp = CreatePen(PS_SOLID, 1, RGB(200,200,210));
+    ob = (HBRUSH)SelectObject(hdc, kb);
+    op = (HPEN)  SelectObject(hdc, kp);
+    Ellipse(hdc, knobCx-knobR, knobCy-knobR, knobCx+knobR, knobCy+knobR);
+    SelectObject(hdc, ob); SelectObject(hdc, op);
+    DeleteObject(kb); DeleteObject(kp);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Bouton owner-draw (accent vert = launch, neutre = quitter)
+// ─────────────────────────────────────────────────────────────────────────────
+void SettingsWindow::DrawButton(HDC hdc, const RECT& rc, const wchar_t* text, HFONT font, bool accent, bool hovered)
+{
+    COLORREF fill, textCol;
+    if (accent) {
+        fill    = hovered ? RGB(80, 168, 255) : C_ACCENT;
+        textCol = RGB(255,255,255);
+    } else {
+        fill    = hovered ? RGB(42, 42, 52) : RGB(34, 34, 42);
+        textCol = C_SUBTLE;
+    }
+
+    HBRUSH bf = CreateSolidBrush(fill);
+    HPEN   bp = CreatePen(PS_SOLID, 1, accent ? RGB(120,188,255) : C_CARD_BD);
+    HBRUSH ob = (HBRUSH)SelectObject(hdc, bf);
+    HPEN   op = (HPEN)  SelectObject(hdc, bp);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 22, 22);
+    SelectObject(hdc, ob); SelectObject(hdc, op);
+    DeleteObject(bf); DeleteObject(bp);
+
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, textCol);
+    HFONT of = (HFONT)SelectObject(hdc, font);
+    DrawTextW(hdc, text, -1, (RECT*)&rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, of);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg,
                                           WPARAM wp, LPARAM lp)
 {
@@ -235,89 +297,144 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg,
 
     switch (msg)
     {
-    // ── Création ──────────────────────────────────────────────────────────
     case WM_CREATE:
         self->CreateControls();
         return 0;
 
-    // ── Pas d'effacement système (évite le flash blanc) ───────────────────
     case WM_ERASEBKGND:
         return 1;
 
-    // ── Fond des contrôles STATIC et CHECKBOX ─────────────────────────────
-    // Sur Windows 10/11, BS_AUTOCHECKBOX envoie WM_CTLCOLORSTATIC
+    // ── Fond des contrôles STATIC (legacy, plus utilisés mais safety) ──────
     case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
     {
         HDC hdc = (HDC)wp;
-        SetBkMode   (hdc, TRANSPARENT);  // <- CRUCIAL : fond transparent
+        SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, C_WHITE);
         return (LRESULT)self->m_bgBrush;
     }
 
-    // ── Fond des boutons ──────────────────────────────────────────────────
-    case WM_CTLCOLORBTN:
+    // ── Dessin custom des contrôles owner-draw ──────────────────────────────
+    case WM_DRAWITEM:
     {
-        HDC  hdc  = (HDC)wp;
-        HWND ctrl = (HWND)lp;
+        LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lp;
+        UINT id = (UINT)wp;
+        HDC hdc = di->hDC;
+
+        // Switch : label gauche + switch droite. Le texte du label est fixé par id.
+        struct Row { UINT id; const wchar_t* title; const wchar_t* sub; };
+        static const Row rows[] = {
+            {ID_CHK_ISLAND,  L"Activer Dynamic Island",       L"Basculez sur ON pour lancer l'île maintenant"},
+            {ID_CHK_STARTUP, L"Démarrer avec Windows",        L"Au démarrage de la session"},
+            {ID_CHK_ADMIN,   L"Démarrer en administrateur",   L"UAC à chaque lancement — plus de privilèges"},
+            {ID_CHK_MUSIC,   L"Musique en cours",             L"Spotify, YouTube Music, VLC, WMP…"},
+            {ID_CHK_NOTIF,   L"Notifications système",        L"Discord, Outlook, Teams, WhatsApp…"},
+            {ID_CHK_SYSTEM,  L"Statistiques système",         L"CPU, RAM, réseau, batterie"},
+            {ID_CHK_LOCK,    L"Rétracter au verrouillage",    L"L'île se replie à l'écran de verrouillage"},
+        };
+        const Row* row = nullptr;
+        for (const auto& r : rows) if (r.id == id) { row = &r; break; }
+        if (!row) break;
+
+        bool on = self->m_toggle[id];   // état réel (pas BM_GETCHECK)
+        bool hovered = (di->itemState & ODS_HOTLIGHT) != 0;
+
         SetBkMode(hdc, TRANSPARENT);
-        if (ctrl == self->m_btnLaunch) {
-            SetTextColor(hdc, RGB(10,10,10));
-            static HBRUSH bGreen = CreateSolidBrush(C_GBTN);
-            return (LRESULT)bGreen;
-        }
+        // Titre
         SetTextColor(hdc, C_WHITE);
-        static HBRUSH bDark = CreateSolidBrush(RGB(50,50,62));
-        return (LRESULT)bDark;
+        HFONT of = (HFONT)SelectObject(hdc, self->m_fontNormal);
+        RECT tr = di->rcItem; tr.left += 6; tr.bottom = tr.top + 22;
+        DrawTextW(hdc, row->title, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        // Sous-titre
+        SetTextColor(hdc, C_MUTED);
+        SelectObject(hdc, self->m_fontSub);
+        RECT sr = di->rcItem; sr.left += 6; sr.top = tr.bottom - 4;
+        DrawTextW(hdc, row->sub, -1, &sr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        SelectObject(hdc, of);
+
+        // Switch à droite
+        self->DrawSwitch(hdc, di->rcItem, on, hovered);
+        return TRUE;
     }
 
-    // ── Peinture personnalisée ────────────────────────────────────────────
+    // ── Peinture du fond : header + cartes ──────────────────────────────────
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
 
-        // Fond
         RECT rc; GetClientRect(hwnd, &rc);
         FillRect(hdc, &rc, self->m_bgBrush);
 
-        // Lignes séparatrices
-        HPEN pen = CreatePen(PS_SOLID, 1, C_LINE);
-        HPEN old = (HPEN)SelectObject(hdc, pen);
-        for (int sy : self->m_sepY) {
-            if (sy == 0) continue;
-            MoveToEx(hdc, PAD, sy, nullptr);
-            LineTo  (hdc, W - PAD, sy);
-        }
-        SelectObject(hdc, old);
-        DeleteObject(pen);
+        SetBkMode(hdc, TRANSPARENT);
 
-        // Pastilles vertes devant les titres de section
-        SetBkMode   (hdc, TRANSPARENT);
-        SetTextColor(hdc, C_GREEN);
-        SelectObject(hdc, self->m_fontSection);
+        // ── Header ──────────────────────────────────────────────────────────
+        // Petite "pilule" décorative (rappel de l'encoche)
+        HBRUSH pillBr = CreateSolidBrush(RGB(35, 35, 44));
+        HPEN   pillPn = CreatePen(PS_SOLID, 1, RGB(60, 60, 72));
+        HBRUSH ob = (HBRUSH)SelectObject(hdc, pillBr);
+        HPEN   op = (HPEN)  SelectObject(hdc, pillPn);
+        RoundRect(hdc, PAD, 32, PAD+58, 32+22, 22, 22);
+        SelectObject(hdc, ob); SelectObject(hdc, op);
+        DeleteObject(pillBr); DeleteObject(pillPn);
 
-        // On dessine la pastille 8px avant la position du label "GENERAL" etc.
-        // Les positions Y sont celles juste après chaque sep + 2
+        // Titre principal
+        SetTextColor(hdc, C_WHITE);
+        HFONT oldF = (HFONT)SelectObject(hdc, self->m_fontHeader);
+        RECT tr = { PAD + 70, 24, W - PAD, 24 + 36 };
+        DrawTextW(hdc, L"Ultraisland", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        // Sous-titre
+        SetTextColor(hdc, C_SUBTLE);
+        SelectObject(hdc, self->m_fontSub);
+        RECT sr = { PAD, 70, W - PAD, 90 };
+        DrawTextW(hdc, L"Configurez les modules, puis activez Dynamic Island.", -1, &sr,
+                  DT_LEFT | DT_TOP | DT_SINGLELINE);
+        SelectObject(hdc, oldF);
+
+        // ── Cartes ──────────────────────────────────────────────────────────
+        static const wchar_t* SECTIONS[5] = {
+            L"GÉNÉRAL", L"MUSIQUE", L"NOTIFICATIONS", L"SYSTÈME", L"VERROUILLAGE"
+        };
         for (int i = 0; i < 5; ++i) {
-            if (self->m_sepY[i] == 0) continue;
-            TextOut(hdc, PAD, self->m_sepY[i] + 12, L"*", 1);
+            const auto& c = self->m_cards[i];
+            if (c.h == 0) continue;
+            self->DrawCard(hdc, PAD, c.y, W - PAD*2, c.h);
+
+            // Label de section dans la carte
+            SetTextColor(hdc, C_ACCENT2);
+            HFONT of = (HFONT)SelectObject(hdc, self->m_fontSection);
+            RECT lr = { PAD + 18, c.y + 14, PAD + W - PAD*2, c.y + 32 };
+            DrawTextW(hdc, SECTIONS[i], -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SelectObject(hdc, of);
         }
 
         EndPaint(hwnd, &ps);
         return 0;
     }
 
-    // ── Commandes ─────────────────────────────────────────────────────────
+    // ── Clic sur un switch = toggle de son état BM_CHECK ────────────────────
     case WM_COMMAND:
-        if (LOWORD(wp) == ID_BTN_LAUNCH) {
-            self->ApplySettings();
-            self->m_launched = true;
-            DestroyWindow(hwnd);
-        } else if (LOWORD(wp) == ID_BTN_QUIT) {
-            self->m_launched = false;
-            DestroyWindow(hwnd);
+    {
+        UINT id = LOWORD(wp);
+        UINT code = HIWORD(wp);
+        if (code == BN_CLICKED) {
+            HWND hCtl = (HWND)lp;
+            // Bascule l'état dans notre map (source de vérité)
+            bool now = !self->m_toggle[id];
+            self->m_toggle[id] = now;
+            InvalidateRect(hCtl, nullptr, TRUE);
+
+            // Le switch « Activer Dynamic Island » EST le bouton de lancement :
+            // dès qu'on le met sur ON → on applique et on lance l'île.
+            if (id == ID_CHK_ISLAND && now) {
+                self->ApplySettings();          // lit toute la map (island=true inclus)
+                self->m_launched = true;
+                DestroyWindow(hwnd);
+            }
         }
         return 0;
+    }
 
     case WM_DESTROY:
         PostQuitMessage(0);

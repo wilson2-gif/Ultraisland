@@ -30,3 +30,23 @@ Release/
 
 # MSBuild / nmake temporaries
 WindowsD.*/
+
+# Packaging MSIX (artefacts générés — jamais versionnés)
+packaging/out/
+packaging/_layout/
+*.msix
+*.appx
+*.cer
+*.pfx
+
+# Logs générés
+*.log
+boot.log
+build_errors.log
+
+# Dossiers de session/outillage (Claude / agents)
+.claude/
+.agents/
+
+# Références de design (maquettes lourdes)
+ultra island maquettes/

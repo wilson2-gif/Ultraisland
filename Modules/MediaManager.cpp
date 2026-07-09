@@ -1,5 +1,6 @@
 #include "MediaManager.h"
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>   // itération de GetSessions()
 #include <winrt/Windows.Storage.Streams.h>
 
 using namespace winrt;
@@ -18,9 +19,9 @@ void MediaManager::Initialize()
         if (m_manager) {
             m_sessionChangedToken = m_manager.SessionsChanged(
                 { this, &MediaManager::OnSessionChanged });
-            auto currentSession = m_manager.GetCurrentSession();
-            if (currentSession) {
-                SubscribeToSession(currentSession);
+            auto best = PickBestSession();
+            if (best) {
+                SubscribeToSession(best);
             }
         }
     } catch (const winrt::hresult_error&) {
@@ -43,7 +44,7 @@ void MediaManager::Shutdown()
 }
 
 void MediaManager::SetMediaChangedCallback(
-    std::function<void(const std::wstring&, const std::wstring&, const std::wstring&, bool, float, const std::vector<uint8_t>&)> callback)
+    std::function<void(const std::wstring&, const std::wstring&, const std::wstring&, bool, float, float, const std::vector<uint8_t>&)> callback)
 {
     m_callback = std::move(callback);
 }
@@ -72,6 +73,37 @@ void MediaManager::SkipPrevious()
     try { m_session.TrySkipPreviousAsync().get(); } catch (...) {}
 }
 
+void MediaManager::SeekTo(double seconds)
+{
+    if (!m_session) return;
+    // Fire-and-forget (pas de .get() : ne bloque jamais le thread UI)
+    try { m_session.TryChangePlaybackPositionAsync((int64_t)(seconds * 1e7)); }
+    catch (...) {}
+}
+
+// Filet de sécurité appelé périodiquement par l'île (~2 s) : les events SMTC
+// se perdent parfois en fin de piste → resync forcée + re-pick si nécessaire.
+void MediaManager::RequestRefresh()
+{
+    try {
+        bool playing = false;
+        if (m_session) {
+            auto info = m_session.GetPlaybackInfo();
+            playing = info && info.PlaybackStatus() ==
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        }
+        if (!playing) {
+            auto best = PickBestSession();
+            if (best && (!m_session ||
+                best.SourceAppUserModelId() != m_session.SourceAppUserModelId())) {
+                SubscribeToSession(best);
+                return;
+            }
+        }
+        UpdateMediaInfoAsync();
+    } catch (...) {}
+}
+
 bool MediaManager::IsSessionActive() const
 {
     return m_session != nullptr;
@@ -79,9 +111,11 @@ bool MediaManager::IsSessionActive() const
 
 void MediaManager::SubscribeToSession(GlobalSystemMediaTransportControlsSession const& session)
 {
+    // GARDE CRITIQUE : ne JAMAIS remplacer une session valide par null —
+    // sinon plus aucun événement n'arrive et l'affichage reste figé à vie.
+    if (!session) return;
     UnsubscribeFromSession();
     m_session = session;
-    if (!m_session) return;
 
     try {
         m_propertiesChangedToken = m_session.MediaPropertiesChanged({ this, &MediaManager::OnMediaPropertiesChanged });
@@ -109,12 +143,28 @@ void MediaManager::UnsubscribeFromSession()
     m_session = nullptr;
 }
 
+// La première session EN LECTURE gagne ; sinon la « courante » de Windows.
+GlobalSystemMediaTransportControlsSession MediaManager::PickBestSession()
+{
+    try {
+        if (!m_manager) return nullptr;
+        auto sessions = m_manager.GetSessions();
+        for (auto const& s : sessions) {
+            auto info = s.GetPlaybackInfo();
+            if (info && info.PlaybackStatus() ==
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+                return s;
+        }
+        return m_manager.GetCurrentSession();
+    } catch (...) { return nullptr; }
+}
+
 void MediaManager::OnSessionChanged(GlobalSystemMediaTransportControlsSessionManager const&, SessionsChangedEventArgs const&)
 {
     try {
         if (!m_manager) return;
-        auto currentSession = m_manager.GetCurrentSession();
-        SubscribeToSession(currentSession);
+        auto best = PickBestSession();
+        if (best) SubscribeToSession(best);   // null → on garde la session actuelle
     } catch (...) {}
 }
 
@@ -125,12 +175,35 @@ void MediaManager::OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSe
 
 void MediaManager::OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession const&, PlaybackInfoChangedEventArgs const&)
 {
+    // Si la session suivie se met en pause alors qu'une AUTRE joue (ex. Spotify
+    // en pause, VLC démarre), on bascule sur celle qui joue.
+    try {
+        bool playing = false;
+        if (m_session) {
+            auto info = m_session.GetPlaybackInfo();
+            playing = info && info.PlaybackStatus() ==
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        }
+        if (!playing) {
+            auto best = PickBestSession();
+            if (best && m_session &&
+                best.SourceAppUserModelId() != m_session.SourceAppUserModelId()) {
+                SubscribeToSession(best);
+                return;   // SubscribeToSession déclenche déjà UpdateMediaInfoAsync
+            }
+        }
+    } catch (...) {}
     UpdateMediaInfoAsync();
 }
 
 void MediaManager::OnTimelinePropertiesChanged(GlobalSystemMediaTransportControlsSession const&, TimelinePropertiesChangedEventArgs const&)
 {
-    UpdateMediaInfoAsync();
+    // Volontairement vide : la timeline change ~1×/seconde pendant la lecture.
+    // Refaire un UpdateMediaInfoAsync complet (re-fetch pochette inclus) à cette
+    // cadence générait un flot d'exceptions WinRT first-chance (0x80040155) et de
+    // la charge inutile. La barre de progression avance désormais toute seule
+    // (WindowManager::OnAnimTick) et se resynchronise sur changement de piste /
+    // play-pause (MediaPropertiesChanged / PlaybackInfoChanged).
 }
 
 fire_and_forget MediaManager::UpdateMediaInfoAsync()
@@ -152,12 +225,15 @@ fire_and_forget MediaManager::UpdateMediaInfoAsync()
             (playbackInfo.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
 
         float progress = 0.f;
+        float durationSec = 0.f;
         auto timeline = session.GetTimelineProperties();
         if (timeline) {
-            auto pos = timeline.Position().count();
+            auto pos = timeline.Position().count();   // unités 100 ns
             auto end = timeline.EndTime().count();
-            if (end > 0)
+            if (end > 0) {
                 progress = static_cast<float>(pos) / static_cast<float>(end);
+                durationSec = static_cast<float>(end) / 1e7f;   // 100 ns → secondes
+            }
         }
 
         std::vector<uint8_t> thumbnailData;
@@ -178,7 +254,7 @@ fire_and_forget MediaManager::UpdateMediaInfoAsync()
         }
 
         if (m_callback)
-            m_callback(title, artist, sourceApp, isPlaying, progress, thumbnailData);
+            m_callback(title, artist, sourceApp, isPlaying, progress, durationSec, thumbnailData);
     } catch (const winrt::hresult_error&) {
     } catch (...) {
     }

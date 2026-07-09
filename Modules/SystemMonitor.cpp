@@ -170,9 +170,13 @@ void SystemMonitor::UpdateBattery()
 
     float pct = (ps.BatteryLifePercent == 255) ? -1.0f
                : static_cast<float>(ps.BatteryLifePercent);
-    bool charging = (ps.BatteryFlag & 8) != 0  // no battery
-                  ? false
-                  : (ps.ACLineStatus == 1);
+    // SYSTEM_POWER_STATUS::BatteryFlag :
+    //   1 High · 2 Low · 4 Critical · 8 CHARGING · 128 No system battery
+    // Ancien code : `& 8` était commenté "no battery" et INVERSAIT la logique
+    // → la batterie affichait "faible" même en charge. Correction :
+    bool hasBattery = (ps.BatteryFlag & 128) == 0;
+    bool charging   = hasBattery && ( (ps.BatteryFlag & 8) != 0     // bit charging
+                                    || ps.ACLineStatus == 1);       // ou branché
 
     EnterCriticalSection(&m_cs);
     m_stats.batteryPercent  = pct;
