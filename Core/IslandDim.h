@@ -35,8 +35,8 @@ namespace Pill {
 
     // Notification toast — vrai toast (icône + app + message), nettement plus
     // grand que l'idle pour que l'arrivée d'une notif soit VISIBLE.
-    constexpr float W_NOTIF = 340.f;
-    constexpr float H_NOTIF = 64.f;
+    constexpr float W_NOTIF = 300.f;   // toast COMPACT (net, strict nécessaire)
+    constexpr float H_NOTIF = 52.f;
 
     // Notification list — panneau historique (taille adaptative)
     // Largeur unifiée à 380 avec les autres panneaux à onglets (musique/système)

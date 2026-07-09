@@ -1,6 +1,7 @@
 // main.cpp — Windows Dynamic Island (UltraIsland)
 #include <Windows.h>
 #include <shellapi.h>
+#include <appmodel.h>   // GetCurrentPackageFullName / APPMODEL_ERROR_NO_PACKAGE (détection MSIX)
 #include <winrt/Windows.Foundation.h>
 #include "Core/WindowManager.h"
 #include "Core/SettingsWindow.h"
@@ -75,16 +76,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
     if (!cfg.islandEnabled) { winrt::uninit_apartment(); return 0; }
 
     // ── 2. Élévation à la demande (config runAsAdmin) ─────────────────────
-    if (cfg.runAsAdmin && !IsProcessElevated()) {
-        wchar_t path[MAX_PATH] = {}; GetModuleFileName(nullptr, path, MAX_PATH);
-        SHELLEXECUTEINFOW sei = { sizeof(sei) };
-        sei.lpVerb = L"runas"; sei.lpFile = path; sei.lpParameters = L"/elevated";
-        sei.nShow = SW_SHOWNORMAL;
-        if (ShellExecuteExW(&sei)) {          // l'instance élevée relit config.json
-            winrt::uninit_apartment();
-            return 0;
+    // IMPORTANT : sous MSIX, relancer via 'runas' lance l'exe HORS du contexte de
+    // package → PERTE de l'identité Ultraisland.App → UserNotificationListener et
+    // LockScreen CESSENT de fonctionner (or l'identité est justement le but du MSIX).
+    // De plus AUCUNE action de l'app n'exige l'admin (radios Wi-Fi/BT, night light,
+    // thème, luminosité, lockscreen marchent toutes en utilisateur standard). Donc :
+    //  - packagé MSIX → on n'élève JAMAIS (l'invite UAC à chaque démarrage disparaît).
+    //  - exe nu (non packagé) → l'ancien comportement runAsAdmin reste possible.
+    {
+        UINT32 len = 0;
+        bool packaged = (GetCurrentPackageFullName(&len, nullptr) != APPMODEL_ERROR_NO_PACKAGE);
+        if (!packaged && cfg.runAsAdmin && !IsProcessElevated()) {
+            wchar_t path[MAX_PATH] = {}; GetModuleFileName(nullptr, path, MAX_PATH);
+            SHELLEXECUTEINFOW sei = { sizeof(sei) };
+            sei.lpVerb = L"runas"; sei.lpFile = path; sei.lpParameters = L"/elevated";
+            sei.nShow = SW_SHOWNORMAL;
+            if (ShellExecuteExW(&sei)) {          // l'instance élevée relit config.json
+                winrt::uninit_apartment();
+                return 0;
+            }
+            // UAC refusé → on continue sans élévation
         }
-        // UAC refusé → on continue sans élévation
     }
 
     // ── 2b. Instance unique ───────────────────────────────────────────────

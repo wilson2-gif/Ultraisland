@@ -771,7 +771,18 @@ void WindowManager::TriggerMusic(const std::wstring& ti,const std::wstring& ar,
     // Base pour l'avance continue de la barre entre deux events SMTC
     m_musicBaseSec = m_content.musicCurrentSec;
     m_musicPosTick = GetTickCount();
-    m_notifDismissAt=0;
+    // BUG NOTIF FIGÉE (corrigé) : on n'efface le compte à rebours d'auto-dismiss QUE si
+    // aucune notif/HUD transitoire n'est affichée. Sinon, les rafraîchissements média
+    // (RequestRefresh ~2s + events SMTC → TriggerMusic) effaçaient m_notifDismissAt AVANT
+    // l'échéance → CheckDismiss sortait en `if(!m_notifDismissAt) return;` → la notif
+    // restait figée jusqu'au survol. Désormais la deadline survit à une MAJ musique.
+    {
+        IslandState _ds = m_animation->GetDisplayState();
+        bool _transient = (_ds==IslandState::NotifExpanded  || _ds==IslandState::CollapsingNotif ||
+                           _ds==IslandState::HUDVolume       || _ds==IslandState::HUDBrightness   ||
+                           _ds==IslandState::HUDNetwork);
+        if(!_transient) m_notifDismissAt = 0;
+    }
 
     // Mode ambiant : pré-charge les paroles synchronisées de la nouvelle piste
     m_ambient.OnTrackChanged(ti, ar, m_content.musicTotalSec);
@@ -975,6 +986,7 @@ void WindowManager::UpdateMusicProgress(float p)
 void WindowManager::TransitionToNotifList()
 {
     m_hoverExpanded=true;
+    m_content.notifScrollY = 0.f;   // repart en haut de la liste
     int cnt=(int)m_notifHistory.size();
     float h=ComputeNotifListHeight(cnt);
     m_animation->StartTransitionCustom(
@@ -1476,6 +1488,20 @@ void WindowManager::OnMouseUp(int x,int y)
 // ─────────────────────────────────────────────────────────────────────────────
 void WindowManager::OnMouseWheel(short delta)
 {
+    // Scroll de la liste des NOTIFICATIONS (miroir DrawNotifList : listTop=66,
+    // itemH=58, gap=6). Permet de voir toutes les notifs quand il y en a plusieurs.
+    if(m_animation->GetDisplayState()==IslandState::NotifList){
+        const float ITEM_H=58.f, GAP=6.f, LIST_TOP=66.f;
+        int n=(int)m_notifHistory.size();
+        float contentH = n*(ITEM_H+GAP)-GAP;
+        float visibleH = m_content.pillH - LIST_TOP - 6.f;
+        float maxScroll=(std::max)(0.f, contentH-visibleH);
+        m_content.notifScrollY = std::clamp(
+            m_content.notifScrollY-(float)delta/120.f*(ITEM_H+GAP), 0.f, maxScroll);
+        InvalidateRect(m_hwnd,nullptr,FALSE);
+        return;
+    }
+
     // Scroll de la liste Bluetooth (couplés + disponibles).
     if(m_animation->GetDisplayState()==IslandState::BluetoothList){
         const float ITEM_H=48.f, GAP=5.f;

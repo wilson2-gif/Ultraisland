@@ -139,6 +139,7 @@ struct IslandContent {
     bool  showQueue       = false;
     float bellShakeT      = 0.f;
     float queueScrollY    = 0.f;   // défilement (px) de la liste Playing Next
+    float notifScrollY    = 0.f;   // défilement (px) de la liste des notifications
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

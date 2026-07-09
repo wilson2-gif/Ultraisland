@@ -14,6 +14,9 @@ namespace K {
     const D2D1_COLOR_F WHITE = {0.960f, 0.960f, 0.972f, 1.00f};
     const D2D1_COLOR_F GR    = {0.420f, 0.430f, 0.480f, 1.00f};
     const D2D1_COLOR_F GR2   = {0.620f, 0.635f, 0.680f, 1.00f};
+    // Texte de CONTENU secondaire LISIBLE (gris clair proche blanc) — à utiliser à
+    // alpha plein pour les messages de notif ; GR/GR2 sont réservés au décoratif.
+    const D2D1_COLOR_F TXT2  = {0.865f, 0.875f, 0.905f, 1.00f};
     // Apple green (SF Symbol fill)
     const D2D1_COLOR_F GRN   = {0.196f, 0.845f, 0.400f, 1.00f};
     const D2D1_COLOR_F BLU   = {0.235f, 0.600f, 1.000f, 1.00f};
@@ -620,29 +623,29 @@ void Renderer::DrawNotif(float px, float pw, float ph, const IslandContent& c) {
     bool  out = (c.state==IslandState::CollapsingNotif);
     float e   = out ? 1.f-CuEase(c.animT) : CuEase(c.animT);
     float cy  = ph*.5f;
-    float bx  = px + 28.f;               // centre de la pastille d'ic\u00F4ne
+    float bx  = px + 24.f;               // centre de la pastille d'ic\u00F4ne
 
-    // Pastille d'ic\u00F4ne (16 r) avec secousse \u00AB cloche \u00BB \u00E0 l'arriv\u00E9e
+    // Pastille d'ic\u00F4ne (13 r) avec secousse \u00AB cloche \u00BB \u00E0 l'arriv\u00E9e
     if(c.bellShakeT>0.f){
         float angle = sinf(c.bellShakeT*6.f*(float)M_PI)*16.f*expf(-3.f*c.bellShakeT);
         D2D1_MATRIX_3X2_F old; m_rt->GetTransform(&old);
         m_rt->SetTransform(D2D1::Matrix3x2F::Rotation(angle,{bx,cy})*old);
-        DrawNotifBadge(bx, cy, 16.f, c.notifAppColor, c.notifIconGlyph, e);
+        DrawNotifBadge(bx, cy, 13.f, c.notifAppColor, c.notifIconGlyph, e);
         m_rt->SetTransform(old);
     } else {
-        DrawNotifBadge(bx, cy, 16.f, c.notifAppColor, c.notifIconGlyph, e);
+        DrawNotifBadge(bx, cy, 13.f, c.notifAppColor, c.notifIconGlyph, e);
     }
 
-    float tx = px + 54.f;
+    float tx = px + 46.f;
     std::wstring app = c.notifAppName.empty() ? L"Notification" : c.notifAppName;
     std::wstring msg = c.notifMessage.empty() ? c.notifTitle    : c.notifMessage;
-    // App (haut) + message (bas) \u2192 toast clairement lisible
-    Txt(app, m_fT, {tx, cy-18, px+pw-50, cy-1}, K::WHITE, e);
+    // App (haut, blanc) + message (bas, gris CLAIR lisible) \u2192 toast net et lisible.
+    Txt(app, m_fT, {tx, cy-15, px+pw-52, cy-1}, K::WHITE, e);
     if(!msg.empty())
-        Txt(msg, m_fS, {tx, cy+1, px+pw-16, cy+19}, K::GR2, e*.85f);
+        Txt(msg, m_fS, {tx, cy+1, px+pw-16, cy+16}, K::TXT2, e);
     if(!c.clockTime.empty())
-        Txt(c.clockTime, m_fC, {px+pw-48, cy-18, px+pw-12, cy-1},
-            K::GR, e*.70f, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Txt(c.clockTime, m_fC, {px+pw-46, cy-15, px+pw-12, cy-1},
+            K::TXT2, e*.62f, DWRITE_TEXT_ALIGNMENT_TRAILING);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -654,51 +657,54 @@ void Renderer::DrawNotifList(float px, float pw, float ph, const IslandContent& 
     DrawTopIcons(px, pw, fade, c.activeMenuIndex, c.bellShakeT, c.tabSlideX);
 
     float pad=14.f, iy=36.f;
-    float btnW=108.f, btnH=22.f, btnX=px+pw-pad-btnW;
-    SetB0({1,1,1,0.08f*fade});
-    m_rt->FillRoundedRectangle({{btnX,iy+1,btnX+btnW,iy+1+btnH},11.f,11.f}, m_b0);
-    Txt(L"Tout effacer", m_fX, {btnX,iy+3,btnX+btnW,iy+1+btnH},
-        K::GR, fade*.80f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    iy += 30.f;
+    // Bouton « Tout effacer » — LISIBLE (action bleue, 12px, alpha plein).
+    float btnW=110.f, btnH=24.f, btnX=px+pw-pad-btnW;
+    SetB0({1,1,1,0.10f*fade});
+    m_rt->FillRoundedRectangle({{btnX,iy,btnX+btnW,iy+btnH},12.f,12.f}, m_b0);
+    Txt(L"Tout effacer", m_fS, {btnX,iy+3,btnX+btnW,iy+btnH-2},
+        K::BLU, fade, DWRITE_TEXT_ALIGNMENT_CENTER);
+    float listTop = iy + btnH + 8.f;   // 66 : haut de la liste (miroir OnMouseWheel)
     float cx = px+pw*0.5f, textHalf=pw*0.5f;
 
     if(c.notifHistory.empty()){
-        float emptyCY = iy+(ph-iy)*.5f;
+        float emptyCY = listTop+(ph-listTop)*.5f;
         if(m_fI20) Txt(L"\uEA8F", m_fI20, {px+pw*.5f-14,emptyCY-20,px+pw*.5f+14,emptyCY},
-            K::GR, fade*.22f, DWRITE_TEXT_ALIGNMENT_CENTER);
+            K::TXT2, fade*.35f, DWRITE_TEXT_ALIGNMENT_CENTER);
         Txt(L"Aucune notification", m_fS, {px+pad,emptyCY+4,px+pw-pad,emptyCY+22},
-            K::GR, fade*.32f, DWRITE_TEXT_ALIGNMENT_CENTER);
+            K::TXT2, fade*.55f, DWRITE_TEXT_ALIGNMENT_CENTER);
         PopSlideClip(c.tabSlideX); return;
     }
 
-    float itemH=58.f, gap=6.f;
-    int maxN = (int)std::min(c.notifHistory.size(), (size_t)3);
-    for(int i=0; i<maxN; ++i){
+    const float itemH=58.f, gap=6.f;
+    int n = (int)c.notifHistory.size();
+    m_rt->PushAxisAlignedClip({px+pad, listTop, px+pw-pad, ph-6}, D2D1_ANTIALIAS_MODE_ALIASED);
+    for(int i=0; i<n; ++i){
         const auto& ni = c.notifHistory[c.notifHistory.size()-1-i];
-        float iy2 = iy + i*(itemH+gap);
-        if(iy2+itemH > ph-8) break;
+        float iy2 = listTop + i*(itemH+gap) - c.notifScrollY;
+        if(iy2+itemH < listTop || iy2 > ph) continue;
         // P1 : fond items légèrement plus foncé — Apple iOS style
-        SetB0({1,1,1,0.065f*fade});
+        SetB0({1,1,1,0.07f*fade});
         m_rt->FillRoundedRectangle({{px+pad,iy2,px+pw-pad,iy2+itemH},14.f,14.f}, m_b0);
-        SetB1({1,1,1,0.07f*fade});
-        m_rt->DrawRoundedRectangle({{px+pad,iy2,px+pw-pad,iy2+itemH},14.f,14.f}, m_b1, 0.45f);
         float bx=px+pad+22.f, by=iy2+itemH*.5f;
-        SetB0(ni.appColor, fade*.82f); m_rt->FillEllipse({{bx,by},16.f,16.f}, m_b0);
+        SetB0(ni.appColor, fade*.85f); m_rt->FillEllipse({{bx,by},15.f,15.f}, m_b0);
         if(m_fI14) Txt(ni.iconGlyph, m_fI14, {bx-10,by-10,bx+10,by+10},
             K::WHITE, fade, DWRITE_TEXT_ALIGNMENT_CENTER);
         float nleft=cx-textHalf+46.f, nright=cx+textHalf-38.f;
-        Txt(ni.appName,  m_fT,  {nleft,iy2+8, nright,iy2+24},  K::WHITE, fade*.92f);
-        Txt(ni.message,  m_fS,  {nleft,iy2+26,nright+32,iy2+itemH-8}, K::GR, fade*.65f);
-        Txt(ni.timeStr,  m_fX,  {nright-22,iy2+8,nright+18,iy2+22},
-            K::GR, fade*.42f, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Txt(ni.appName,  m_fT,  {nleft,iy2+9, nright-44,iy2+25},  K::WHITE, fade);
+        Txt(ni.message,  m_fS,  {nleft,iy2+27,nright,iy2+itemH-8}, K::TXT2, fade*.92f);
+        Txt(ni.timeStr,  m_fX,  {nright-44,iy2+9,nright,iy2+24},
+            K::TXT2, fade*.60f, DWRITE_TEXT_ALIGNMENT_TRAILING);
     }
-    if(c.notifHistory.size()>3){
-        float dotY=ph-10.f;
-        for(int i=0;i<3;++i){
-            float dx=px+pw*.5f+(i-1)*10.f;
-            SetB0({1,1,1,i==0?0.52f:0.18f}, fade);
-            m_rt->FillEllipse({{dx,dotY},2.f,2.f}, m_b0);
-        }
+    m_rt->PopAxisAlignedClip();
+    // Barre de défilement fine si le contenu dépasse la zone visible.
+    float contentH = n*(itemH+gap)-gap;
+    float visH     = (ph-6.f) - listTop;
+    if(contentH > visH + 1.f){
+        float th   = std::max(24.f, visH*visH/contentH);
+        float maxS = contentH - visH;
+        float ty   = listTop + (visH-th) * (maxS>0.f ? c.notifScrollY/maxS : 0.f);
+        SetB0({1,1,1,0.22f*fade});
+        m_rt->FillRoundedRectangle({{px+pw-7,ty,px+pw-4,ty+th},1.5f,1.5f}, m_b0);
     }
     PopSlideClip(c.tabSlideX);
 }
